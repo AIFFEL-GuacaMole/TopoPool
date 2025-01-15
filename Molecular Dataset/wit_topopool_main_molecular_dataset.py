@@ -124,7 +124,11 @@ def main():
     random_seed = 0
     torch.manual_seed(random_seed)
     np.random.seed(random_seed)
-    device = torch.device("cuda:" + str(args.device)) if torch.cuda.is_available() else torch.device("cpu")
+    device = (
+        torch.device(f"cuda:{str(args.device)}")
+        if torch.cuda.is_available()
+        else torch.device("cpu")
+    )
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(random_seed)
 
@@ -147,7 +151,7 @@ def main():
         max_acc = max(max_acc, acc_test)
         print("Current best result is:", max_acc)
 
-        if not args.filename == "":
+        if args.filename != "":
             with open(args.filename, 'a+') as f:
                 f.write("%f %f %f" % (avg_loss, acc_train, acc_test))
                 f.write("\n")
@@ -155,7 +159,7 @@ def main():
 
         print(model.eps)
 
-    with open(str(args.dataset)+'acc_results.txt', 'a+') as f:
+    with open(f'{str(args.dataset)}acc_results.txt', 'a+') as f:
         f.write(str(max_acc) + '\n')
     
 
