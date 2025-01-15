@@ -2,6 +2,7 @@ import networkx as nx
 import numpy as np
 import random
 import torch
+from pathlib import Path
 from sklearn.model_selection import StratifiedKFold
 from torch_geometric.datasets import TUDataset
 from torch_geometric.utils import degree
@@ -42,12 +43,14 @@ def load_data(dataset, degree_as_tag):
     label_dict = {}
     feat_dict = {}
 
-    with open('dataset/%s/%s.txt' % (dataset, dataset), 'r') as f:
+    current_file_dir = Path(__file__).resolve().parent
+
+    with open(f'{current_file_dir}/dataset/{dataset}/{dataset}.txt', 'r') as f:
         n_g = int(f.readline().strip())
-        for i in range(n_g):
+        for _ in range(n_g):
             row = f.readline().strip().split()
             n, l = [int(w) for w in row]
-            if not l in label_dict:
+            if l not in label_dict:
                 mapped = len(label_dict)
                 label_dict[l] = mapped
             g = nx.Graph()
@@ -64,7 +67,7 @@ def load_data(dataset, degree_as_tag):
                     attr = None
                 else:
                     row, attr = [int(w) for w in row[:tmp]], np.array([float(w) for w in row[tmp:]])
-                if not row[0] in feat_dict:
+                if row[0] not in feat_dict:
                     mapped = len(feat_dict)
                     feat_dict[row[0]] = mapped
                 node_tags.append(feat_dict[row[0]])
@@ -87,9 +90,9 @@ def load_data(dataset, degree_as_tag):
 
             g_list.append(S2VGraph(g, l, node_tags))
 
-    #add labels and edge_mat       
+    #add labels and edge_mat
     for g in g_list:
-        g.neighbors = [[] for i in range(len(g.g))]
+        g.neighbors = [[] for _ in range(len(g.g))]
         for i, j in g.g.edges():
             g.neighbors[i].append(j)
             g.neighbors[j].append(i)
@@ -164,7 +167,7 @@ def separate_TUDataset(graph_list, seed, fold_idx):
 
 
 def get_dataset(name, sparse=True, cleaned=False):
-    dataset = TUDataset(root='/tmp/' + name, name=name)
+    dataset = TUDataset(root=f'/tmp/{name}', name=name)
     dataset.data.edge_attr = None
 
     if dataset.data.x is None:

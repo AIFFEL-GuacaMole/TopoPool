@@ -95,7 +95,7 @@ def main():
     parser.add_argument('--epochs', type=int, default=350,
                         help='number of epochs to train (default: 350)')
     parser.add_argument('--lr', type=float, default=0.001,
-                        help='learning rate (default: 0.01)')
+                        help='learning rate (default: 0.001)')
     parser.add_argument('--seed', type=int, default=9,
                         help='random seed for splitting the dataset into 10 (default: 0)')
     parser.add_argument('--fold_idx', type=int, default=0,
@@ -113,11 +113,11 @@ def main():
     parser.add_argument('--neighbor_pooling_type', type=str, default="sum", choices=["sum", "average", "max"],
                         help='Pooling for over neighboring nodes: sum, average or max')
     parser.add_argument('--learn_eps', action="store_true",
-                                        help='Whether to learn the epsilon weighting for the center nodes. Does not affect training accuracy though.')
+                        help='Whether to learn the epsilon weighting for the center nodes. Does not affect training accuracy though.')
     parser.add_argument('--degree_as_tag', action="store_true",
     					help='let the input node features be the degree of nodes (heuristics for unlabeled graph)')
     parser.add_argument('--filename', type = str, default = "",
-                                        help='output file')
+                        help='output file')
     args = parser.parse_args()
 
     #set up seeds and gpu device

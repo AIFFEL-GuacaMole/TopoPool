@@ -13,3 +13,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Etc.
+PTCacc_results.txt

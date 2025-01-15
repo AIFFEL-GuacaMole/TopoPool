@@ -7,8 +7,7 @@ from torch_geometric.utils.num_nodes import maybe_num_nodes
 from torch_geometric.utils import to_dense_adj
 
 import sys
-sys.path.append("models/")
-from mlp import MLP
+from models.mlp import MLP
 
 from torch.autograd import Variable
 import pdb
