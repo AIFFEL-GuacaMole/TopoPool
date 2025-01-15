@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import numpy as np
-
+import wandb
 from tqdm import tqdm
 
 from util import load_data, separate_data
@@ -36,7 +36,6 @@ def train(args, model, device, train_graphs, optimizer, epoch):
             optimizer.zero_grad()
             loss.backward()         
             optimizer.step()
-        
 
         loss = loss.detach().cpu().numpy()
         loss_accum += loss
@@ -47,9 +46,11 @@ def train(args, model, device, train_graphs, optimizer, epoch):
     average_loss = loss_accum/total_iters
     print("loss training: %f" % (average_loss))
     
+    # Log training loss to WandB
+    wandb.log({"train_loss": average_loss}, step=epoch)
+    
     return average_loss
 
-###pass data to model with minibatch during testing to avoid memory overflow (does not perform backpropagation)
 def pass_data_iteratively(model, graphs, minibatch_size = 64):
     model.eval()
     output = []
@@ -78,11 +79,16 @@ def test(args, model, device, train_graphs, test_graphs, epoch):
 
     print("accuracy train: %f test: %f" % (acc_train, acc_test))
 
+    # Log accuracies to WandB
+    wandb.log({
+        "train_accuracy": acc_train,
+        "test_accuracy": acc_test,
+    }, step=epoch)
+
     return acc_train, acc_test
 
 def main():
     # Training settings
-    # Note: Hyper-parameters need to be tuned in order to obtain results reported in the paper.
     parser = argparse.ArgumentParser(description='PyTorch graph convolutional neural net for whole-graph classification')
     parser.add_argument('--dataset', type=str, default="PTC",
                         help='name of dataset (default: MUTAG)')
@@ -94,8 +100,8 @@ def main():
                         help='number of iterations per each epoch (default: 50)')
     parser.add_argument('--epochs', type=int, default=350,
                         help='number of epochs to train (default: 350)')
-    parser.add_argument('--lr', type=float, default=0.001,
-                        help='learning rate (default: 0.001)')
+    parser.add_argument('--lr', type=float, default=0.0001,
+                        help='learning rate (default: 0.0001)')
     parser.add_argument('--seed', type=int, default=9,
                         help='random seed for splitting the dataset into 10 (default: 0)')
     parser.add_argument('--fold_idx', type=int, default=0,
@@ -115,10 +121,32 @@ def main():
     parser.add_argument('--learn_eps', action="store_true",
                         help='Whether to learn the epsilon weighting for the center nodes. Does not affect training accuracy though.')
     parser.add_argument('--degree_as_tag', action="store_true",
-    					help='let the input node features be the degree of nodes (heuristics for unlabeled graph)')
-    parser.add_argument('--filename', type = str, default = "",
+                        help='let the input node features be the degree of nodes (heuristics for unlabeled graph)')
+    parser.add_argument('--filename', type=str, default="",
                         help='output file')
+    parser.add_argument('--wandb_project', type=str, default="Wit-TopoPool",
+                        help='WandB project name')
+    parser.add_argument('--wandb_entity', type=str, default=None,
+                        help='WandB entity name')
     args = parser.parse_args()
+
+    # Initialize WandB
+    run = wandb.init(
+        project=args.wandb_project,
+        entity=args.wandb_entity,
+        config={
+            "dataset": args.dataset,
+            "batch_size": args.batch_size,
+            "learning_rate": args.lr,
+            "epochs": args.epochs,
+            "num_layers": args.num_layers,
+            "hidden_dim": args.hidden_dim,
+            "graph_pooling": args.graph_pooling_type,
+            "neighbor_pooling": args.neighbor_pooling_type,
+            "learn_eps": args.learn_eps,
+            "degree_as_tag": args.degree_as_tag
+        }
+    )
 
     #set up seeds and gpu device
     random_seed = 0
@@ -138,12 +166,18 @@ def main():
 
     model = GraphCNN(args.num_layers, args.num_mlp_layers, train_graphs[0].node_features.shape[1], args.hidden_dim, num_classes, args.final_dropout, args.learn_eps, args.graph_pooling_type, args.neighbor_pooling_type, device).to(device)
 
+    # Log model architecture
+    wandb.watch(model, log="all")
+
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.5)
 
     max_acc = 0.0
     for epoch in range(1, args.epochs + 1):
         scheduler.step()
+
+        # Log learning rate
+        wandb.log({"learning_rate": optimizer.param_groups[0]['lr']}, step=epoch)
 
         avg_loss = train(args, model, device, train_graphs, optimizer, epoch)
         acc_train, acc_test = test(args, model, device, train_graphs, test_graphs, epoch)
@@ -157,11 +191,19 @@ def main():
                 f.write("\n")
         print("")
 
-        print(model.eps)
+        # Log epsilon values if learn_eps is True
+        if args.learn_eps:
+            wandb.log({"epsilon": model.eps.item()}, step=epoch)
+            print(model.eps)
+
+    # Log final best accuracy
+    wandb.log({"best_test_accuracy": max_acc})
 
     with open(f'{str(args.dataset)}acc_results.txt', 'a+') as f:
         f.write(str(max_acc) + '\n')
-    
+
+    # Close WandB run
+    wandb.finish()
 
 if __name__ == '__main__':
     main()
