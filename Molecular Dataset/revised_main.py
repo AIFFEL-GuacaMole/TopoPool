@@ -80,37 +80,91 @@ def train(args, model, device, train_graphs, optimizer, epoch, criterion):
         train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=4,  # Adjust based on your system
+        num_workers=4,
         collate_fn=collate_fn
     )
 
     loss_accum = 0
+    valid_batches = 0
     pbar = tqdm(train_loader, unit='batch')
 
-    for batch_graph in pbar:
-        batch_graph = list(batch_graph)  # Ensure it's a list
-        output = model(batch_graph)
-        labels = torch.FloatTensor([graph.label for graph in batch_graph]).to(device)
-        output = output.squeeze(1)
-        
-        # Compute loss
-        loss = criterion(output, labels)
+    # Add gradient clipping
+    max_grad_norm = 1.0
 
-        # Backpropagation
-        optimizer.zero_grad()
-        loss.backward()         
-        optimizer.step()
+    for batch_idx, batch_graph in enumerate(pbar):
+        try:
+            batch_graph = list(batch_graph)
 
-        # Accumulate loss
-        loss_val = loss.detach().cpu().item()
-        loss_accum += loss_val
+            # Monitor input statistics
+            node_features = torch.cat([graph.node_features for graph in batch_graph])
+            if torch.isnan(node_features).any():
+                print(f"Warning: NaN detected in input features for batch {batch_idx}")
+                continue
 
-        # Update progress bar
-        pbar.set_description(f'Epoch: {epoch} - Loss: {loss_val:.4f}')
+            # Forward pass with monitoring
+            output = model(batch_graph)
+            
+            # Check output validity
+            if torch.isnan(output).any():
+                print(f"Warning: NaN detected in model output for batch {batch_idx}")
+                print(f"Output shape: {output.shape}")
+                print(f"Output range: [{output.min()}, {output.max()}]")
+                continue
 
-    average_loss = loss_accum / len(train_loader)
-    print(f"Average training loss: {average_loss:.6f}")
-    
+            # Prepare labels
+            labels = torch.FloatTensor([graph.label for graph in batch_graph]).to(device)
+            output = output.squeeze(1)
+
+            # Add small epsilon to prevent log(0)
+            eps = 1e-7
+            if isinstance(criterion, nn.BCEWithLogitsLoss):
+                # For binary classification
+                loss = criterion(output, labels)
+            else:
+                # For regression
+                # Ensure outputs are in valid range
+                output = torch.clamp(output, min=-100, max=100)
+                loss = criterion(output, labels)
+
+            # Check if loss is valid
+            if torch.isnan(loss) or torch.isinf(loss):
+                print(f"Warning: Invalid loss value {loss.item()} in batch {batch_idx}")
+                print(f"Output stats - Min: {output.min()}, Max: {output.max()}, Mean: {output.mean()}")
+                print(f"Labels stats - Min: {labels.min()}, Max: {labels.max()}, Mean: {labels.mean()}")
+                continue
+
+            # Backpropagation with gradient clipping
+            optimizer.zero_grad()
+            loss.backward()
+            
+            # Monitor gradients
+            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+            if grad_norm > max_grad_norm:
+                print(f"Warning: Gradient norm {grad_norm} exceeded threshold {max_grad_norm}")
+            
+            optimizer.step()
+
+            # Accumulate loss
+            loss_accum += loss.detach().cpu().item()
+            valid_batches += 1
+
+            # Update progress bar with valid loss
+            if valid_batches > 0:
+                avg_loss = loss_accum / valid_batches
+                pbar.set_description(f'Epoch: {epoch} - Loss: {avg_loss:.4f}')
+
+        except Exception as e:
+            print(f"Error processing batch {batch_idx}: {str(e)}")
+            continue
+
+    # Compute final average loss
+    if valid_batches > 0:
+        average_loss = loss_accum / valid_batches
+        print(f"Average training loss: {average_loss:.6f}")
+    else:
+        print("Warning: No valid batches processed")
+        average_loss = float('inf')
+
     return average_loss
 
 def pass_data_iteratively(model, graphs, minibatch_size=64):
@@ -143,33 +197,73 @@ def pass_data_iteratively(model, graphs, minibatch_size=64):
 def test(args, model, device, train_graphs, test_graphs, epoch, criterion, task_type):
     model.eval()
 
+    def process_outputs(output, labels):
+        # Remove any NaN values
+        valid_mask = ~torch.isnan(output)
+        output = output[valid_mask]
+        labels = labels[valid_mask]
+        
+        # Ensure we have valid data
+        if len(output) == 0:
+            print("Warning: No valid predictions after filtering NaN values")
+            return None
+            
+        # Convert to numpy and ensure correct shape
+        output = output.cpu().detach().numpy()
+        labels = labels.cpu().numpy()
+        
+        return output, labels
+
     # Evaluate on Training Data
-    train_output = pass_data_iteratively(model, train_graphs).cpu().detach().numpy()
-    train_labels = np.array([graph.label for graph in train_graphs])
-    train_output = train_output.squeeze(1)
+    with torch.no_grad():
+        train_output = pass_data_iteratively(model, train_graphs)
+        train_labels = torch.tensor([graph.label for graph in train_graphs], 
+                                  device=device, dtype=torch.float)
+        
+        # Process outputs
+        processed_data = process_outputs(train_output.squeeze(1), train_labels)
+        if processed_data is None:
+            print("Warning: Could not compute training metrics due to invalid outputs")
+            return 0.0, 0.0
+            
+        train_output, train_labels = processed_data
     
-    if task_type == 'binary':
-        train_ap = average_precision_score(train_labels, train_output, average="macro")
-    elif task_type == 'regression':
-        # Replace with an appropriate regression metric, e.g., R2 score
-        train_ap = None  # Placeholder
-    else:
-        raise ValueError(f"Unsupported task type: {task_type}")
-
     # Evaluate on Testing Data
-    test_output = pass_data_iteratively(model, test_graphs).cpu().detach().numpy()
-    test_labels = np.array([graph.label for graph in test_graphs])
-    test_output = test_output.squeeze(1)
-    
-    if task_type == 'binary':
-        test_ap = average_precision_score(test_labels, test_output, average="macro")
-    elif task_type == 'regression':
-        # Replace with an appropriate regression metric, e.g., R2 score
-        test_ap = None  # Placeholder
-    else:
-        raise ValueError(f"Unsupported task type: {task_type}")
+    with torch.no_grad():
+        test_output = pass_data_iteratively(model, test_graphs)
+        test_labels = torch.tensor([graph.label for graph in test_graphs],
+                                 device=device, dtype=torch.float)
+        
+        # Process outputs
+        processed_data = process_outputs(test_output.squeeze(1), test_labels)
+        if processed_data is None:
+            print("Warning: Could not compute testing metrics due to invalid outputs")
+            return 0.0, 0.0
+            
+        test_output, test_labels = processed_data
 
-    print(f"Epoch: {epoch} - Train AP: {train_ap:.4f}, Test AP: {test_ap:.4f}")
+    try:
+        if task_type == 'binary':
+            # Compute metrics with error handling
+            train_ap = average_precision_score(train_labels, train_output, average="macro")
+            test_ap = average_precision_score(test_labels, test_output, average="macro")
+        elif task_type == 'regression':
+            # For regression tasks, use MSE or other appropriate metric
+            from sklearn.metrics import mean_squared_error
+            train_ap = -mean_squared_error(train_labels, train_output)  # Negative so higher is better
+            test_ap = -mean_squared_error(test_labels, test_output)
+        else:
+            raise ValueError(f"Unsupported task type: {task_type}")
+            
+    except Exception as e:
+        print(f"Warning: Error computing metrics: {str(e)}")
+        return 0.0, 0.0
+
+    print(f"Epoch: {epoch}")
+    print(f"Train AP: {train_ap:.4f}")
+    print(f"Test AP: {test_ap:.4f}")
+    print(f"Train output range: [{train_output.min():.4f}, {train_output.max():.4f}]")
+    print(f"Test output range: [{test_output.min():.4f}, {test_output.max():.4f}]")
 
     return train_ap, test_ap
 

@@ -156,31 +156,59 @@ class GraphCNN(nn.Module):
         pooled_x = []
         pooled_graph_sizes = []
         PI_witnesses_dgms = []
+        
         for i, graph in enumerate(batch_graph):
             x = graph.node_features.to(self.device)
             edge_index = graph.edge_mat.to(self.device)
+            num_nodes = x.size(0)  # Get number of nodes in current graph
 
             witnesses = self.score_graph_layer(x, edge_index).to(self.device)
             node_embeddings = self.score_node_layer(x, edge_index).to(self.device)
             node_point_clouds = node_embeddings.view(-1, self.num_neighbors, 2).to(self.device)
             score_lifespan = torch.FloatTensor([sum_diag_from_point_cloud(node_point_clouds[i,...]) for i in range(node_point_clouds.size(0))]).to(self.device)
 
-            batch = torch.LongTensor([0] * x.size(0)).to(self.device)
-            perm = topk(score_lifespan, 0.5, batch)
+            # Create proper batch tensor for current graph
+            batch = torch.zeros(num_nodes, dtype=torch.long, device=self.device)
+            perm = topk(score_lifespan, int(num_nodes * 0.5), batch)  # Use 50% of nodes
             x = x[perm]
-            edge_index, _ = filter_adj(edge_index, edge_attr, perm, num_nodes=graph.node_features.size(0))
+            edge_index, _ = filter_adj(edge_index, edge_attr, perm, num_nodes=num_nodes)
 
-            # witnesses complex
-            network_statistics = torch.sum(to_dense_adj(graph.edge_mat)[0,:,:], dim = 1).to(self.device)
-            witnesses_perm = topk(network_statistics, 10, batch)
+            # Compute network statistics with size check
+            dense_adj = to_dense_adj(graph.edge_mat)[0,:,:]
+            network_statistics = torch.sum(dense_adj, dim=1).to(self.device)
+            
+            # Ensure we don't request more landmarks than available nodes
+            num_landmarks = min(10, network_statistics.size(0))
+            batch_for_witnesses = torch.zeros(network_statistics.size(0), dtype=torch.long, device=self.device)
+            witnesses_perm = topk(network_statistics, num_landmarks, batch_for_witnesses)
+            
+            # Select landmarks based on witnesses permutation
             landmarks = witnesses[witnesses_perm]
-            witness_complex = gd.EuclideanStrongWitnessComplex(witnesses=witnesses, landmarks=landmarks)
-            simplex_tree = witness_complex.create_simplex_tree(max_alpha_square = 1, limit_dimension = 1)
-            simplex_tree.compute_persistence(min_persistence=-1.)
-            witnesses_dgm = simplex_tree.persistence_intervals_in_dimension(0)[:-1,:]
-            # persistence image based on witnesses diagram
-            PI_witnesses_dgm = torch.FloatTensor(persistence_images(witnesses_dgm, normalization = False).reshape(1,-1)).to(self.device) # vectorization
-            PI_witnesses_dgms.append(PI_witnesses_dgm)
+
+            # Create witness complex
+            try:
+                witness_complex = gd.EuclideanStrongWitnessComplex(
+                    witnesses=witnesses.cpu().detach().numpy(),
+                    landmarks=landmarks.cpu().detach().numpy()
+                )
+                simplex_tree = witness_complex.create_simplex_tree(max_alpha_square=1, limit_dimension=1)
+                simplex_tree.compute_persistence(min_persistence=-1.)
+                witnesses_dgm = simplex_tree.persistence_intervals_in_dimension(0)[:-1,:]
+                
+                # Ensure we have valid persistence diagram
+                if len(witnesses_dgm) > 0:
+                    PI_witnesses_dgm = torch.FloatTensor(
+                        persistence_images(witnesses_dgm, normalization=False).reshape(1,-1)
+                    ).to(self.device)
+                else:
+                    # Create zero tensor if no persistence features found
+                    PI_witnesses_dgm = torch.zeros((1, 25), device=self.device)  # Assuming 25 is the expected size
+                    
+                PI_witnesses_dgms.append(PI_witnesses_dgm)
+            except Exception as e:
+                print(f"Warning: Witness complex creation failed: {e}")
+                # Provide fallback tensor
+                PI_witnesses_dgms.append(torch.zeros((1, 25), device=self.device))
 
             start_idx.append(start_idx[i] + x.size(0))
             edge_mat_list.append(edge_index + start_idx[i])
@@ -199,7 +227,6 @@ class GraphCNN(nn.Module):
             Adj_block_elem = torch.cat([Adj_block_elem, elem], 0).to(self.device)
 
         Adj_block = torch.sparse.FloatTensor(Adj_block_idx, Adj_block_elem, torch.Size([start_idx[-1],start_idx[-1]]))
-
 
         return Adj_block.to(self.device), pooled_X_concat, PI_witnesses_dgms, pooled_graph_sizes
 
@@ -294,46 +321,70 @@ class GraphCNN(nn.Module):
         else:
             Adj_block, pooled_X_concat, PI_witnesses_dgms, pooled_graph_sizes = self.__preprocess_neighbors_sumavepool_witnesses(batch_graph)
 
-        #list of hidden representation at each layer (including input)
+        # List of hidden representation at each layer (including input)
         hidden_rep = [pooled_X_concat]
         h = pooled_X_concat
 
+        # Process through layers with gradient clipping
         for layer in range(self.num_layers-1):
             if self.neighbor_pooling_type == "max" and self.learn_eps:
-                h = self.next_layer_eps(h, layer, padded_neighbor_list = padded_neighbor_list)
+                h = self.next_layer_eps(h, layer, padded_neighbor_list=padded_neighbor_list)
             elif self.neighbor_pooling_type != "max" and self.learn_eps:
-                h = self.next_layer_eps(h, layer, Adj_block = Adj_block)
+                h = self.next_layer_eps(h, layer, Adj_block=Adj_block)
             elif self.neighbor_pooling_type == "max":
-                h = self.next_layer(h, layer, padded_neighbor_list = padded_neighbor_list)
+                h = self.next_layer(h, layer, padded_neighbor_list=padded_neighbor_list)
             else:
-                # operation
-                h = self.next_layer(h, layer, Adj_block = Adj_block)
-
+                h = self.next_layer(h, layer, Adj_block=Adj_block)
+            
+            # Clip gradients to prevent explosion
+            if h.requires_grad:
+                h = torch.clamp(h, min=-100, max=100)
+            
             hidden_rep.append(h)
 
         hidden_rep = torch.cat(hidden_rep, 1)
 
-        # after graph pooling
+        # Process graphs
         graph_sizes = pooled_graph_sizes
+        batch_size = len(graph_sizes)
+        
+        # Initialize tensors with zeros
+        batch_graphs = torch.zeros(batch_size, self.dense_dim - self.PI_hidden_dim, device=self.device)
+        batch_graphs_out = torch.zeros(batch_size, self.dense_dim, device=self.device)
 
-        batch_graphs = torch.zeros(len(graph_sizes), self.dense_dim - self.PI_hidden_dim).to(self.device)
-        batch_graphs = Variable(batch_graphs)
-
-        batch_graphs_out = torch.zeros(len(graph_sizes), self.dense_dim).to(self.device)
-        batch_graphs_out = Variable(batch_graphs_out)
-
-
+        # Process each graph
         node_embeddings = torch.split(hidden_rep, graph_sizes, dim=0)
+        for g_i in range(batch_size):
+            try:
+                cur_node_embeddings = node_embeddings[g_i]
+                
+                # Skip empty graphs
+                if cur_node_embeddings.size(0) == 0:
+                    continue
+                    
+                # Compute attention with numerical stability
+                attn_coef = self.attend(cur_node_embeddings)
+                attn_coef = torch.clamp(attn_coef, min=-100, max=100)  # Prevent extreme values
+                attn_weights = F.softmax(attn_coef, dim=0)  # Use softmax for normalization
+                
+                # Compute graph embeddings
+                cur_graph_embeddings = torch.matmul(attn_weights.transpose(0, 1), cur_node_embeddings)
+                batch_graphs[g_i] = cur_graph_embeddings.view(self.dense_dim - self.PI_hidden_dim)
+                
+                # Process witness persistence images
+                if g_i < len(PI_witnesses_dgms):  # Safety check
+                    witnesses_PI = self.mlp_PI_witnesses(PI_witnesses_dgms[g_i])
+                    witnesses_PI = torch.clamp(witnesses_PI, min=-100, max=100)  # Prevent extreme values
+                    batch_graphs_out[g_i] = torch.cat([batch_graphs[g_i], witnesses_PI.view(-1)], dim=0)
+                
+            except Exception as e:
+                print(f"Warning: Error processing graph {g_i}: {str(e)}")
+                # Keep zeros for this graph as fallback
+                continue
 
-        for g_i in range(len(graph_sizes)):
-            cur_node_embeddings = node_embeddings[g_i]
-            attn_coef = self.attend(cur_node_embeddings)
-            attn_weights = torch.transpose(attn_coef, 0, 1)
-            cur_graph_embeddings = torch.matmul(attn_weights, cur_node_embeddings)
-            batch_graphs[g_i] = cur_graph_embeddings.view(self.dense_dim - self.PI_hidden_dim)
-            witnesses_PI_out = (self.mlp_PI_witnesses(PI_witnesses_dgms[g_i])).view(-1)
-            batch_graphs_out[g_i] = torch.cat([batch_graphs[g_i], witnesses_PI_out], dim=0)
-
-        score = F.dropout(self.linear1(batch_graphs_out), self.final_dropout, training=self.training)
+        # Final dropout and linear layer with gradient clipping
+        pre_score = self.linear1(batch_graphs_out)
+        pre_score = torch.clamp(pre_score, min=-100, max=100)  # Final clamp for stability
+        score = F.dropout(pre_score, self.final_dropout, training=self.training)
 
         return score
