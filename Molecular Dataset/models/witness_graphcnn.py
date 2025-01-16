@@ -148,61 +148,118 @@ class GraphCNN(nn.Module):
 
 
     def __preprocess_neighbors_sumavepool_witnesses(self, batch_graph):
-        ###create block diagonal sparse matrix
-        edge_attr = None
-
+        """
+        Process graph batch with witness complex computation and pooling operations.
+        Creates block diagonal sparse matrix and handles witness complex computations.
+        """
+        edge_attr = None  # Initialize edge attributes as None
         edge_mat_list = []
         start_idx = [0]
         pooled_x = []
         pooled_graph_sizes = []
         PI_witnesses_dgms = []
+        
         for i, graph in enumerate(batch_graph):
-            x = graph.node_features.to(self.device)
-            edge_index = graph.edge_mat.to(self.device)
+            try:
+                # Initial feature processing
+                x = graph.node_features.to(self.device)
+                edge_index = graph.edge_mat.to(self.device)
+                num_nodes = x.size(0)
 
-            witnesses = self.score_graph_layer(x, edge_index).to(self.device)
-            node_embeddings = self.score_node_layer(x, edge_index).to(self.device)
-            node_point_clouds = node_embeddings.view(-1, self.num_neighbors, 2).to(self.device)
-            score_lifespan = torch.FloatTensor([sum_diag_from_point_cloud(node_point_clouds[i,...]) for i in range(node_point_clouds.size(0))]).to(self.device)
+                # Compute node embeddings and point clouds
+                witnesses = self.score_graph_layer(x, edge_index).to(self.device)
+                node_embeddings = self.score_node_layer(x, edge_index).to(self.device)
+                node_point_clouds = node_embeddings.view(-1, self.num_neighbors, 2).to(self.device)
+                
+                # Calculate score lifespan for initial pooling
+                score_lifespan = torch.FloatTensor([
+                    sum_diag_from_point_cloud(node_point_clouds[j,...]) 
+                    for j in range(node_point_clouds.size(0))
+                ]).to(self.device)
 
-            batch = torch.LongTensor([0] * x.size(0)).to(self.device)
-            perm = topk(score_lifespan, 0.5, batch)
-            x = x[perm]
-            edge_index, _ = filter_adj(edge_index, edge_attr, perm, num_nodes=graph.node_features.size(0))
+                # First pooling operation with adaptive ratio
+                batch = torch.zeros(num_nodes, dtype=torch.long, device=self.device)
+                pool_ratio = min(0.5, max(0.1, num_nodes / 100))
+                    # ↳ Adaptive pooling ratio
+                num_nodes_to_pool = max(1, int(num_nodes * pool_ratio))
+                
+                perm = topk(score_lifespan, num_nodes_to_pool, batch)  # permutation
+                x = x[perm]
+                edge_index, _ = filter_adj(edge_index, edge_attr, perm, num_nodes=num_nodes)
 
-            # witnesses complex
-            network_statistics = torch.sum(to_dense_adj(graph.edge_mat)[0,:,:], dim = 1).to(self.device)
-            witnesses_perm = topk(network_statistics, 10, batch)
-            landmarks = witnesses[witnesses_perm]
-            witness_complex = gd.EuclideanStrongWitnessComplex(witnesses=witnesses, landmarks=landmarks)
-            simplex_tree = witness_complex.create_simplex_tree(max_alpha_square = 1, limit_dimension = 1)
-            simplex_tree.compute_persistence(min_persistence=-1.)
-            witnesses_dgm = simplex_tree.persistence_intervals_in_dimension(0)[:-1,:]
-            # persistence image based on witnesses diagram
-            PI_witnesses_dgm = torch.FloatTensor(persistence_images(witnesses_dgm, normalization = False).reshape(1,-1)).to(self.device) # vectorization
-            PI_witnesses_dgms.append(PI_witnesses_dgm)
+                # Witness complex computation
+                network_statistics = torch.sum(to_dense_adj(graph.edge_mat)[0,:,:], dim=1).to(self.device)
+                batch_for_witnesses = torch.zeros(network_statistics.size(0), dtype=torch.long, device=self.device)
+                    # ↳ batch tensor that matches network_statistics size 
+                
+                # Select landmarks with size validation
+                num_landmarks = min(10, network_statistics.size(0))
+                    # ↳ Make sure not to request more landmarks than node quantity
+                if num_landmarks < 2:
+                    print(f"Warning: Graph {i} has insufficient nodes for witness complex ({num_landmarks})")
+                    
+                witnesses_perm = topk(network_statistics, num_landmarks, batch_for_witnesses)
+                landmarks = witnesses[witnesses_perm]
 
-            start_idx.append(start_idx[i] + x.size(0))
-            edge_mat_list.append(edge_index + start_idx[i])
-            pooled_x.append(x)
-            pooled_graph_sizes.append(x.size(0))
+                # Create witness complex and compute persistence
+                try:
+                    witness_complex = gd.EuclideanStrongWitnessComplex(
+                        witnesses=witnesses.cpu().detach().numpy(),
+                        landmarks=landmarks.cpu().detach().numpy()
+                    )
+                    simplex_tree = witness_complex.create_simplex_tree(max_alpha_square=1, limit_dimension=1)
+                    simplex_tree.compute_persistence(min_persistence=-1.)
+                    witnesses_dgm = simplex_tree.persistence_intervals_in_dimension(0)[:-1,:]
+                    
+                    # Compute persistence image
+                    PI_witnesses_dgm = torch.FloatTensor(
+                        persistence_images(witnesses_dgm, normalization=False).reshape(1,-1)
+                    ).to(self.device)
+                    
+                except Exception as e:
+                    print(f"Warning: Witness complex computation failed for graph {i}: {e}")
+                    PI_witnesses_dgm = torch.zeros((1, 25), device=self.device)
+                
+                PI_witnesses_dgms.append(PI_witnesses_dgm)
 
-        pooled_X_concat = torch.cat(pooled_x, 0).to(self.device)
-        Adj_block_idx = torch.cat(edge_mat_list, 1).to(self.device)
-        Adj_block_elem = torch.ones(Adj_block_idx.shape[1]).to(self.device)
+                # Update graph information
+                start_idx.append(start_idx[i] + x.size(0))
+                edge_mat_list.append(edge_index + start_idx[i])
+                pooled_x.append(x)
+                pooled_graph_sizes.append(x.size(0))
 
-        if not self.learn_eps:
-            num_node = start_idx[-1]
-            self_loop_edge = torch.LongTensor([range(num_node), range(num_node)]).to(self.device)
-            elem = torch.ones(num_node).to(self.device)
-            Adj_block_idx = torch.cat([Adj_block_idx, self_loop_edge], 1).to(self.device)
-            Adj_block_elem = torch.cat([Adj_block_elem, elem], 0).to(self.device)
+            except Exception as e:
+                print(f"Error processing graph {i}: {e}")
+                # Add minimal valid data
+                PI_witnesses_dgms.append(torch.zeros((1, 25), device=self.device))
+                pooled_x.append(x[:1])
+                pooled_graph_sizes.append(1)
+                continue
 
-        Adj_block = torch.sparse.FloatTensor(Adj_block_idx, Adj_block_elem, torch.Size([start_idx[-1],start_idx[-1]]))
+        # Create adjacency block matrix
+        try:
+            pooled_X_concat = torch.cat(pooled_x, 0).to(self.device)
+            Adj_block_idx = torch.cat(edge_mat_list, 1).to(self.device)
+            Adj_block_elem = torch.ones(Adj_block_idx.shape[1]).to(self.device)
 
+            if not self.learn_eps:
+                num_node = start_idx[-1]
+                self_loop_edge = torch.LongTensor([range(num_node), range(num_node)]).to(self.device)
+                elem = torch.ones(num_node).to(self.device)
+                Adj_block_idx = torch.cat([Adj_block_idx, self_loop_edge], 1).to(self.device)
+                Adj_block_elem = torch.cat([Adj_block_elem, elem], 0).to(self.device)
+
+            Adj_block = torch.sparse.FloatTensor(
+                Adj_block_idx, 
+                Adj_block_elem, 
+                torch.Size([start_idx[-1], start_idx[-1]])
+            )
+
+        except Exception as e:
+            print(f"Error creating adjacency block matrix: {e}")
+            raise
 
         return Adj_block.to(self.device), pooled_X_concat, PI_witnesses_dgms, pooled_graph_sizes
-
 
     def __preprocess_graphpool(self, batch_graph):
         ###create sum or average pooling sparse matrix over entire nodes in each graph (num graphs x num nodes)
