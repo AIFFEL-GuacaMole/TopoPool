@@ -1,20 +1,20 @@
-import torch
-import numpy as np
-from tqdm import tqdm
 from rdkit import Chem
-from tdc.benchmark_group import admet_group
-from models.witness_graphcnn import GraphCNN
-import networkx as nx
-import os
-import pandas as pd
-from tdc.single_pred import ADME
-from tqdm import tqdm
-from revised_util import mol_to_s2v_graph, prepare_molecular_dataset
-import torch.nn as nn
 from sklearn.metrics import average_precision_score
+from tdc.benchmark_group import admet_group
+from tdc.single_pred import ADME
 import torch.optim as optim
-import argparse
+import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
+import argparse
+import networkx as nx
+import numpy as np
+import torch
+import wandb
+
+from models.witness_graphcnn import GraphCNN
+from revised_util import mol_to_s2v_graph, prepare_molecular_dataset
+
 
 # Define the criterion based on the task type later in the code
 # For now, initialize it as binary; will adjust in main()
@@ -95,10 +95,14 @@ def train(args, model, device, train_graphs, optimizer, epoch, criterion):
         
         # Compute loss
         loss = criterion(output, labels)
-
+        
         # Backpropagation
         optimizer.zero_grad()
-        loss.backward()         
+        loss.backward()
+        
+        # Add gradient clipping
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        
         optimizer.step()
 
         # Accumulate loss
@@ -110,6 +114,7 @@ def train(args, model, device, train_graphs, optimizer, epoch, criterion):
 
     average_loss = loss_accum / len(train_loader)
     print(f"Average training loss: {average_loss:.6f}")
+    wandb.log({"Average training loss": average_loss})
     
     return average_loss
 
@@ -170,7 +175,8 @@ def test(args, model, device, train_graphs, test_graphs, epoch, criterion, task_
         raise ValueError(f"Unsupported task type: {task_type}")
 
     print(f"Epoch: {epoch} - Train AP: {train_ap:.4f}, Test AP: {test_ap:.4f}")
-
+    wandb.log({"Train AP": train_ap, "Test AP": test_ap})
+    
     return train_ap, test_ap
 
 def main():
@@ -276,6 +282,23 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.5)
 
+    wandb.init(
+        project="TopoPool-1",
+        config={
+            "learning_rate": args.lr,
+            "epochs": args.epochs,
+            "num_layers": args.num_layers,
+            "num_mlp_layers": args.num_mlp_layers,
+            "input_dim": train_graphs[0].node_features.shape[1],
+            "hidden_dim": args.hidden_dim,
+            "output_dim": num_classes,
+            "final_dropout": args.final_dropout,
+            "learn_eps": args.learn_eps,
+            "graph_pooling_type": args.graph_pooling_type,
+            "neighbor_pooling_type": args.neighbor_pooling_type
+        }
+    )
+    
     max_ap = 0.0
     for epoch in range(1, args.epochs + 1):
         scheduler.step()

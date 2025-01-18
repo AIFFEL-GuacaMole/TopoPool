@@ -1,18 +1,17 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.autograd import Variable
 from torch_geometric.nn.pool.topk_pool import topk, filter_adj
 from torch_geometric.nn import GCNConv, SAGEConv, GATConv, GINConv
 from torch_geometric.utils.num_nodes import maybe_num_nodes
 from torch_geometric.utils import to_dense_adj
-
-import sys
-from models.mlp import MLP
-
-from torch.autograd import Variable
 import pdb
 import gudhi as gd
 import numpy as np
+
+from models.log_setup import logger
+from models.mlp import MLP
 
 def persistence_images(dgm, resolution = [5,5], return_raw = False, normalization = True, bandwidth = 1., power = 1.):
     PXs, PYs = dgm[:, 0], dgm[:, 1]
@@ -211,13 +210,19 @@ class GraphCNN(nn.Module):
                     simplex_tree.compute_persistence(min_persistence=-1.)
                     witnesses_dgm = simplex_tree.persistence_intervals_in_dimension(0)[:-1,:]
                     
-                    # Compute persistence image
-                    PI_witnesses_dgm = torch.FloatTensor(
-                        persistence_images(witnesses_dgm, normalization=False).reshape(1,-1)
-                    ).to(self.device)
+                    # Check if we got valid intervals
+                    # **Filter out intervals with infinite death times**
+                    if len(witnesses_dgm) > 0 and np.isfinite(witnesses_dgm).all():
+                        # Compute persistence image
+                        PI_witnesses_dgm = torch.FloatTensor(
+                            persistence_images(witnesses_dgm, normalization=False).reshape(1,-1)
+                        ).to(self.device)
+                    else:
+                        logger.debug(f"Warning: Invalid persistence diagram for graph {i}")
+                        PI_witnesses_dgm = torch.zeros((1, 25), device=self.device)
                     
                 except Exception as e:
-                    print(f"Warning: Witness complex computation failed for graph {i}: {e}")
+                    logger.debug(f"Warning: Error in witness complex computation for graph {i}: {e}")
                     PI_witnesses_dgm = torch.zeros((1, 25), device=self.device)
                 
                 PI_witnesses_dgms.append(PI_witnesses_dgm)
@@ -322,14 +327,14 @@ class GraphCNN(nn.Module):
 
 
     def next_layer(self, h, layer, padded_neighbor_list = None, Adj_block = None):
-        ###pooling neighboring nodes and center nodes altogether  
-            
+        ###pooling neighboring nodes and center nodes altogether
+        
         if self.neighbor_pooling_type == "max":
             ##If max pooling
             pooled = self.maxpool(h, padded_neighbor_list)
         else:
             #If sum or average pooling
-            pooled = torch.spmm(Adj_block, h) # ******
+            pooled = torch.spmm(Adj_block, h)
             if self.neighbor_pooling_type == "average":
                 #If average pooling
                 degree = torch.spmm(Adj_block, torch.ones((Adj_block.shape[0], 1)).to(self.device))
@@ -365,7 +370,8 @@ class GraphCNN(nn.Module):
             else:
                 # operation
                 h = self.next_layer(h, layer, Adj_block = Adj_block)
-
+            # print(f"Layer {layer} output - has NaN: {torch.isnan(h).any()}")
+            # print(f"Layer {layer} output - range: [{h.min()}, {h.max()}]")
             hidden_rep.append(h)
 
         hidden_rep = torch.cat(hidden_rep, 1)
@@ -384,6 +390,8 @@ class GraphCNN(nn.Module):
 
         for g_i in range(len(graph_sizes)):
             cur_node_embeddings = node_embeddings[g_i]
+            
+            # Attention
             attn_coef = self.attend(cur_node_embeddings)
             attn_weights = torch.transpose(attn_coef, 0, 1)
             cur_graph_embeddings = torch.matmul(attn_weights, cur_node_embeddings)
@@ -392,5 +400,8 @@ class GraphCNN(nn.Module):
             batch_graphs_out[g_i] = torch.cat([batch_graphs[g_i], witnesses_PI_out], dim=0)
 
         score = F.dropout(self.linear1(batch_graphs_out), self.final_dropout, training=self.training)
-
+        score = torch.clamp(score, min=-88.0, max=88.0)  # Add clamping
+        # print("Final score:", 
+        #   f"range=[{score.min()}, {score.max()}]",
+        #   f"has_nan={torch.isnan(score).any()}")
         return score
