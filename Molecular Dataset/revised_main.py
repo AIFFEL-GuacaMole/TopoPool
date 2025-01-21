@@ -1,20 +1,20 @@
-import torch
-import numpy as np
-from tqdm import tqdm
 from rdkit import Chem
-from tdc.benchmark_group import admet_group
-from models.witness_graphcnn import GraphCNN
-import networkx as nx
-import os
-import pandas as pd
-from tdc.single_pred import ADME
-from tqdm import tqdm
-from revised_util import mol_to_s2v_graph, prepare_molecular_dataset
-import torch.nn as nn
 from sklearn.metrics import average_precision_score
+from tdc.benchmark_group import admet_group
+from tdc.single_pred import ADME
 import torch.optim as optim
-import argparse
+import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
+import argparse
+import networkx as nx
+import numpy as np
+import torch
+import wandb
+
+from models.witness_graphcnn import GraphCNN
+from revised_util import mol_to_s2v_graph, prepare_molecular_dataset
+
 
 # Define the criterion based on the task type later in the code
 # For now, initialize it as binary; will adjust in main()
@@ -88,61 +88,23 @@ def train(args, model, device, train_graphs, optimizer, epoch, criterion):
     valid_batches = 0
     pbar = tqdm(train_loader, unit='batch')
 
-    # Add gradient clipping
-    max_grad_norm = 1.0
-
-    for batch_idx, batch_graph in enumerate(pbar):
-        try:
-            batch_graph = list(batch_graph)
-
-            # Monitor input statistics
-            node_features = torch.cat([graph.node_features for graph in batch_graph])
-            if torch.isnan(node_features).any():
-                print(f"Warning: NaN detected in input features for batch {batch_idx}")
-                continue
-
-            # Forward pass with monitoring
-            output = model(batch_graph)
-            
-            # Check output validity
-            if torch.isnan(output).any():
-                print(f"Warning: NaN detected in model output for batch {batch_idx}")
-                print(f"Output shape: {output.shape}")
-                print(f"Output range: [{output.min()}, {output.max()}]")
-                continue
-
-            # Prepare labels
-            labels = torch.FloatTensor([graph.label for graph in batch_graph]).to(device)
-            output = output.squeeze(1)
-
-            # Add small epsilon to prevent log(0)
-            eps = 1e-7
-            if isinstance(criterion, nn.BCEWithLogitsLoss):
-                # For binary classification
-                loss = criterion(output, labels)
-            else:
-                # For regression
-                # Ensure outputs are in valid range
-                output = torch.clamp(output, min=-100, max=100)
-                loss = criterion(output, labels)
-
-            # Check if loss is valid
-            if torch.isnan(loss) or torch.isinf(loss):
-                print(f"Warning: Invalid loss value {loss.item()} in batch {batch_idx}")
-                print(f"Output stats - Min: {output.min()}, Max: {output.max()}, Mean: {output.mean()}")
-                print(f"Labels stats - Min: {labels.min()}, Max: {labels.max()}, Mean: {labels.mean()}")
-                continue
-
-            # Backpropagation with gradient clipping
-            optimizer.zero_grad()
-            loss.backward()
-            
-            # Monitor gradients
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
-            if grad_norm > max_grad_norm:
-                print(f"Warning: Gradient norm {grad_norm} exceeded threshold {max_grad_norm}")
-            
-            optimizer.step()
+    for batch_graph in pbar:
+        batch_graph = list(batch_graph)  # Ensure it's a list
+        output = model(batch_graph)
+        labels = torch.FloatTensor([graph.label for graph in batch_graph]).to(device)
+        output = output.squeeze(1)
+        
+        # Compute loss
+        loss = criterion(output, labels)
+        
+        # Backpropagation
+        optimizer.zero_grad()
+        loss.backward()
+        
+        # Add gradient clipping
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        
+        optimizer.step()
 
             # Accumulate loss
             loss_accum += loss.detach().cpu().item()
@@ -153,18 +115,10 @@ def train(args, model, device, train_graphs, optimizer, epoch, criterion):
                 avg_loss = loss_accum / valid_batches
                 pbar.set_description(f'Epoch: {epoch} - Loss: {avg_loss:.4f}')
 
-        except Exception as e:
-            print(f"Error processing batch {batch_idx}: {str(e)}")
-            continue
-
-    # Compute final average loss
-    if valid_batches > 0:
-        average_loss = loss_accum / valid_batches
-        print(f"Average training loss: {average_loss:.6f}")
-    else:
-        print("Warning: No valid batches processed")
-        average_loss = float('inf')
-
+    average_loss = loss_accum / len(train_loader)
+    print(f"Average training loss: {average_loss:.6f}")
+    wandb.log({"Average training loss": average_loss})
+    
     return average_loss
 
 def pass_data_iteratively(model, graphs, minibatch_size=64):
@@ -229,42 +183,21 @@ def test(args, model, device, train_graphs, test_graphs, epoch, criterion, task_
         train_output, train_labels = processed_data
     
     # Evaluate on Testing Data
-    with torch.no_grad():
-        test_output = pass_data_iteratively(model, test_graphs)
-        test_labels = torch.tensor([graph.label for graph in test_graphs],
-                                 device=device, dtype=torch.float)
-        
-        # Process outputs
-        processed_data = process_outputs(test_output.squeeze(1), test_labels)
-        if processed_data is None:
-            print("Warning: Could not compute testing metrics due to invalid outputs")
-            return 0.0, 0.0
-            
-        test_output, test_labels = processed_data
+    test_output = pass_data_iteratively(model, test_graphs).cpu().detach().numpy()
+    test_labels = np.array([graph.label for graph in test_graphs])
+    test_output = test_output.squeeze(1)
+    
+    if task_type == 'binary':
+        test_ap = average_precision_score(test_labels, test_output, average="macro")
+    elif task_type == 'regression':
+        # Replace with an appropriate regression metric, e.g., R2 score
+        test_ap = None  # Placeholder
+    else:
+        raise ValueError(f"Unsupported task type: {task_type}")
 
-    try:
-        if task_type == 'binary':
-            # Compute metrics with error handling
-            train_ap = average_precision_score(train_labels, train_output, average="macro")
-            test_ap = average_precision_score(test_labels, test_output, average="macro")
-        elif task_type == 'regression':
-            # For regression tasks, use MSE or other appropriate metric
-            from sklearn.metrics import mean_squared_error
-            train_ap = -mean_squared_error(train_labels, train_output)  # Negative so higher is better
-            test_ap = -mean_squared_error(test_labels, test_output)
-        else:
-            raise ValueError(f"Unsupported task type: {task_type}")
-            
-    except Exception as e:
-        print(f"Warning: Error computing metrics: {str(e)}")
-        return 0.0, 0.0
-
-    print(f"Epoch: {epoch}")
-    print(f"Train AP: {train_ap:.4f}")
-    print(f"Test AP: {test_ap:.4f}")
-    print(f"Train output range: [{train_output.min():.4f}, {train_output.max():.4f}]")
-    print(f"Test output range: [{test_output.min():.4f}, {test_output.max():.4f}]")
-
+    print(f"Epoch: {epoch} - Train AP: {train_ap:.4f}, Test AP: {test_ap:.4f}")
+    wandb.log({"Train AP": train_ap, "Test AP": test_ap})
+    
     return train_ap, test_ap
 
 def main():
@@ -370,6 +303,23 @@ def main():
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.5)
 
+    wandb.init(
+        project="TopoPool-1",
+        config={
+            "learning_rate": args.lr,
+            "epochs": args.epochs,
+            "num_layers": args.num_layers,
+            "num_mlp_layers": args.num_mlp_layers,
+            "input_dim": train_graphs[0].node_features.shape[1],
+            "hidden_dim": args.hidden_dim,
+            "output_dim": num_classes,
+            "final_dropout": args.final_dropout,
+            "learn_eps": args.learn_eps,
+            "graph_pooling_type": args.graph_pooling_type,
+            "neighbor_pooling_type": args.neighbor_pooling_type
+        }
+    )
+    
     max_ap = 0.0
     for epoch in range(1, args.epochs + 1):
         scheduler.step()

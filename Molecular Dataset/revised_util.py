@@ -1,20 +1,12 @@
-import torch
-import networkx as nx
-from rdkit import Chem
-from torch_geometric.data import Data
-
-
-import torch
-import numpy as np
-import networkx as nx
-
 from copy import deepcopy
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdkit.Geometry import Point3D
-from torch_geometric.data import Data
-from rdkit.Chem import AllChem
 from rdkit.ML.Descriptors.MoleculeDescriptors import MolecularDescriptorCalculator
+from torch_geometric.data import Data
+import torch
+import numpy as np
+import networkx as nx
 
 # allowable multiple choice node and edge features
 allowable_features = {
