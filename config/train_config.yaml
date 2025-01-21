@@ -1,0 +1,124 @@
+parser_arg:
+    # dataset:
+    #     help: 'name of dataset (default: PTC)'
+    #     name_or_flags: '--dataset'
+    #     type: str
+    #     default: "PTC"
+
+    - device:
+        name_or_flags: '--device'
+        help: 'which gpu to use if any (default: 0)'
+        type: int
+        default: 0
+
+    - batch_size:
+        name_or_flags: '--batch_size'
+        help: 'input batch size for training (default: 32)'
+        type: int
+        default: 512
+
+    - epochs:
+        name_or_flags: '--epochs'
+        help: 'number of epochs to train (default: 350)'
+        type: int
+        default: 350
+
+    - lr:
+        name_or_flags: '--lr'
+        help: 'learning rate (default: 0.001)'
+        type: float
+        default: 0.001
+
+    - seed:
+        name_or_flags: '--seed'
+        help: 'random seed for splitting the dataset into 10-fold validation (default: 9)'
+        type: int
+        default: 9
+
+    - fold_idx:
+        name_or_flags: '--fold_idx'
+        help: 'the index of fold in 10-fold validation. Should be less than 10.'
+        type: int
+        default: 0
+
+    - num_layers:
+        name_or_flags: '--num_layers'
+        help: 'number of layers INCLUDING the input one (default: 5)'
+        type: int
+        default: 7
+
+    - num_mlp_layers:
+        name_or_flags: '--num_mlp_layers'
+        help: 'number of layers for MLP EXCLUDING the input one (default: 2). 1 means linear model.'
+        type: int
+        default: 4
+
+    - hidden_dim:
+        name_or_flags: '--hidden_dim'
+        help: 'number of hidden units (default: 8)'
+        type: int
+        default: 512
+
+    - final_dropout:
+        name_or_flags: '--final_dropout'
+        help: 'final layer dropout (default: 0.0)'
+        type: float
+        default: 0.0
+
+    - graph_pooling_type:
+        name_or_flags: '--graph_pooling_type'
+        help: 'Pooling over nodes in a graph: sum or average'
+        type: str
+        default: "sum"
+        choices: ["sum", "average"]
+
+    - neighbor_pooling_type:
+        name_or_flags: '--neighbor_pooling_type'
+        help: 'Pooling over neighboring nodes: sum, average or max'
+        type: str
+        default: "sum"
+        choices: ["sum", "average", "max"]
+
+    - learn_eps:
+        name_or_flags: '--learn_eps'
+        help: >-
+            'Whether to learn the epsilon weighting for the center nodes.
+            Does not affect training accuracy though.'
+        action: "store_true"
+
+    - degree_as_tag:
+        name_or_flags: '--degree_as_tag'
+        help: >-
+            Let the input node features be the degree of nodes
+            (heuristics for unlabeled graph)
+        action: "store_true"
+
+    - filename:
+        name_or_flags: '--filename'
+        help: 'output file'
+        type: str
+        default: ""
+
+    - num_neighbors:
+        name_or_flags: '--num_neighbors'
+        help: ''
+        type: int
+        default: 5
+
+    - num_landmarks:
+        name_or_flags: '--num_landmarks'
+        help: 'number of landmarks for TDA (default: 10)'
+        type: int
+        default: 6
+
+    - first_pool_ratio:
+        name_or_flags: '--first_pool_ratio'
+        help: 'ratio of the first pooling (default: )'
+        type: float
+        default: 0.5
+
+    - PI_hidden_dim:
+        name_or_flags: '--PI_hidden_dim'
+        help: 'hidden dimmesion size for Persistent Images (default: 16)'
+        type: float
+        default: 16

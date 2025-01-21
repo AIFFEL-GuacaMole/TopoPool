@@ -17,4 +17,4 @@ wheels/
 .venv
 
 # Etc.
-PTCacc_results.txt
+*_results.txt

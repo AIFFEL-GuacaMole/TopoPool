@@ -64,7 +64,21 @@ def sum_diag_from_point_cloud(X, mode="superlevel"):
 
 
 class GraphCNN(nn.Module):
-    def __init__(self, num_layers, num_mlp_layers, input_dim, hidden_dim, output_dim, final_dropout, learn_eps, graph_pooling_type, neighbor_pooling_type, device):
+    def __init__(self,
+                 num_layers,
+                 num_mlp_layers,
+                 input_dim,
+                 hidden_dim,
+                 output_dim,
+                 final_dropout,
+                 learn_eps,
+                 graph_pooling_type,
+                 neighbor_pooling_type,
+                 device,
+                 num_neighbors,
+                 num_landmarks,
+                 first_pool_ratio,
+                 PI_hidden_dim: int):
         '''
             num_layers: number of layers in the neural networks (INCLUDING the input layer)
             num_mlp_layers: number of layers in mlps (EXCLUDING the input layer)
@@ -87,7 +101,9 @@ class GraphCNN(nn.Module):
         self.neighbor_pooling_type = neighbor_pooling_type
         self.learn_eps = learn_eps
         self.eps = nn.Parameter(torch.zeros(self.num_layers-1))
-        self.num_neighbors = 5
+        self.num_neighbors = int(num_neighbors)
+        self.num_landmarks = int(num_landmarks)
+        self.first_pool_ratio = float(first_pool_ratio)
 
         ###List of MLPs
         self.mlps = torch.nn.ModuleList()
@@ -104,7 +120,7 @@ class GraphCNN(nn.Module):
             self.batch_norms.append(nn.BatchNorm1d(hidden_dim))
 
         # for attentional second-order pooling
-        self.PI_hidden_dim = 16
+        self.PI_hidden_dim = PI_hidden_dim
         self.total_latent_dim = input_dim + hidden_dim * (num_layers - 1) + self.PI_hidden_dim
         self.dense_dim = self.total_latent_dim
         self.attend = nn.Linear(self.total_latent_dim - self.PI_hidden_dim, 1)
@@ -178,11 +194,12 @@ class GraphCNN(nn.Module):
 
                 # First pooling operation with adaptive ratio
                 batch = torch.zeros(num_nodes, dtype=torch.long, device=self.device)
-                pool_ratio = min(0.5, max(0.1, num_nodes / 100))
-                    # ↳ Adaptive pooling ratio
-                num_nodes_to_pool = max(1, int(num_nodes * pool_ratio))
+                # pool_ratio = min(0.5, max(0.1, num_nodes / 100))
+                #     # ↳ Adaptive pooling ratio
+                # num_nodes_to_pool = max(1, int(num_nodes * pool_ratio))
                 
-                perm = topk(score_lifespan, num_nodes_to_pool, batch)  # permutation
+                perm = topk(score_lifespan, self.first_pool_ratio, batch)  # permutation
+                perm = topk(score_lifespan, 0.2, batch)  # permutation
                 x = x[perm]
                 edge_index, _ = filter_adj(edge_index, edge_attr, perm, num_nodes=num_nodes)
 
@@ -192,7 +209,7 @@ class GraphCNN(nn.Module):
                     # ↳ batch tensor that matches network_statistics size 
                 
                 # Select landmarks with size validation
-                num_landmarks = min(10, network_statistics.size(0))
+                num_landmarks = min(self.num_landmarks, network_statistics.size(0))
                     # ↳ Make sure not to request more landmarks than node quantity
                 if num_landmarks < 2:
                     print(f"Warning: Graph {i} has insufficient nodes for witness complex ({num_landmarks})")

@@ -12,6 +12,7 @@ import numpy as np
 import torch
 import wandb
 
+from config_loader import args  # Training settings
 from models.witness_graphcnn import GraphCNN
 from revised_util import mol_to_s2v_graph, prepare_molecular_dataset
 
@@ -106,14 +107,14 @@ def train(args, model, device, train_graphs, optimizer, epoch, criterion):
         
         optimizer.step()
 
-            # Accumulate loss
-            loss_accum += loss.detach().cpu().item()
-            valid_batches += 1
+        # Accumulate loss
+        loss_accum += loss.detach().cpu().item()
+        valid_batches += 1
 
-            # Update progress bar with valid loss
-            if valid_batches > 0:
-                avg_loss = loss_accum / valid_batches
-                pbar.set_description(f'Epoch: {epoch} - Loss: {avg_loss:.4f}')
+        # Update progress bar with valid loss
+        if valid_batches > 0:
+            avg_loss = loss_accum / valid_batches
+            pbar.set_description(f'Epoch: {epoch} - Loss: {avg_loss:.4f}')
 
     average_loss = loss_accum / len(train_loader)
     print(f"Average training loss: {average_loss:.6f}")
@@ -201,42 +202,6 @@ def test(args, model, device, train_graphs, test_graphs, epoch, criterion, task_
     return train_ap, test_ap
 
 def main():
-    # Training settings
-    parser = argparse.ArgumentParser(description='PyTorch graph convolutional neural net for whole-graph classification')
-    parser.add_argument('--dataset', type=str, default="PTC",
-                        help='name of dataset (default: PTC)')
-    parser.add_argument('--device', type=int, default=0,
-                        help='which gpu to use if any (default: 0)')
-    parser.add_argument('--batch_size', type=int, default=512,
-                        help='input batch size for training (default: 32)')
-    parser.add_argument('--epochs', type=int, default=350,
-                        help='number of epochs to train (default: 350)')
-    parser.add_argument('--lr', type=float, default=0.001,
-                        help='learning rate (default: 0.001)')
-    parser.add_argument('--seed', type=int, default=9,
-                        help='random seed for splitting the dataset into 10-fold validation (default: 9)')
-    parser.add_argument('--fold_idx', type=int, default=0,
-                        help='the index of fold in 10-fold validation. Should be less than 10.')
-    parser.add_argument('--num_layers', type=int, default=5,
-                        help='number of layers INCLUDING the input one (default: 5)')
-    parser.add_argument('--num_mlp_layers', type=int, default=2,
-                        help='number of layers for MLP EXCLUDING the input one (default: 2). 1 means linear model.')
-    parser.add_argument('--hidden_dim', type=int, default=128,
-                        help='number of hidden units (default: 8)')
-    parser.add_argument('--final_dropout', type=float, default=0.0,
-                        help='final layer dropout (default: 0.0)')
-    parser.add_argument('--graph_pooling_type', type=str, default="sum", choices=["sum", "average"],
-                        help='Pooling over nodes in a graph: sum or average')
-    parser.add_argument('--neighbor_pooling_type', type=str, default="sum", choices=["sum", "average", "max"],
-                        help='Pooling over neighboring nodes: sum, average or max')
-    parser.add_argument('--learn_eps', action="store_true",
-                        help='Whether to learn the epsilon weighting for the center nodes. Does not affect training accuracy though.')
-    parser.add_argument('--degree_as_tag', action="store_true",
-                        help='Let the input node features be the degree of nodes (heuristics for unlabeled graph)')
-    parser.add_argument('--filename', type=str, default="",
-                        help='output file')
-    args = parser.parse_args()
-
     # Set up seeds and GPU device
     random_seed = args.seed
     num_classes = 1  # Adjust based on your task
@@ -297,27 +262,23 @@ def main():
         graph_pooling_type=args.graph_pooling_type,
         neighbor_pooling_type=args.neighbor_pooling_type,
         device=device,
+        num_neighbors=args.num_neighbors,
+        num_landmarks=args.num_landmarks,
+        first_pool_ratio=args.first_pool_ratio,
+        PI_hidden_dim=args.PI_hidden_dim,
     ).to(device)
 
     # Initialize optimizer and scheduler
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.5)
 
+    
     wandb.init(
         project="TopoPool-1",
-        config={
-            "learning_rate": args.lr,
-            "epochs": args.epochs,
-            "num_layers": args.num_layers,
-            "num_mlp_layers": args.num_mlp_layers,
-            "input_dim": train_graphs[0].node_features.shape[1],
-            "hidden_dim": args.hidden_dim,
-            "output_dim": num_classes,
-            "final_dropout": args.final_dropout,
-            "learn_eps": args.learn_eps,
-            "graph_pooling_type": args.graph_pooling_type,
-            "neighbor_pooling_type": args.neighbor_pooling_type
-        }
+        config=dict({"input_dim": train_graphs[0].node_features.shape[1],
+                     "output_dim": num_classes,
+                    },
+                    **vars(args))
     )
     
     max_ap = 0.0
