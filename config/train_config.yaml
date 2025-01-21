@@ -11,17 +11,39 @@ parser_arg:
         type: int
         default: 0
 
+    - epochs:
+        name_or_flags: '--epochs'
+        help: 'number of epochs to train (default: 350)'
+        type: int
+        default: 100
+
+    - learn_eps:
+        name_or_flags: '--learn_eps'
+        help: >-
+            'Whether to learn the epsilon weighting for the center nodes.
+            Does not affect training accuracy though.'
+        action: "store_true"
+
+    - degree_as_tag:
+        name_or_flags: '--degree_as_tag'
+        help: >-
+            Let the input node features be the degree of nodes
+            (heuristics for unlabeled graph)
+        action: "store_true"
+
+    - filename:
+        name_or_flags: '--filename'
+        help: 'output file'
+        type: str
+        default: ""
+
+# ----- Sweep related arguments -----
+
     - batch_size:
         name_or_flags: '--batch_size'
         help: 'input batch size for training (default: 32)'
         type: int
         default: 512
-
-    - epochs:
-        name_or_flags: '--epochs'
-        help: 'number of epochs to train (default: 350)'
-        type: int
-        default: 350
 
     - lr:
         name_or_flags: '--lr'
@@ -78,26 +100,6 @@ parser_arg:
         type: str
         default: "sum"
         choices: ["sum", "average", "max"]
-
-    - learn_eps:
-        name_or_flags: '--learn_eps'
-        help: >-
-            'Whether to learn the epsilon weighting for the center nodes.
-            Does not affect training accuracy though.'
-        action: "store_true"
-
-    - degree_as_tag:
-        name_or_flags: '--degree_as_tag'
-        help: >-
-            Let the input node features be the degree of nodes
-            (heuristics for unlabeled graph)
-        action: "store_true"
-
-    - filename:
-        name_or_flags: '--filename'
-        help: 'output file'
-        type: str
-        default: ""
 
     - num_neighbors:
         name_or_flags: '--num_neighbors'

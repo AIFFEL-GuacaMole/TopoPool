@@ -12,7 +12,6 @@ import numpy as np
 import torch
 import wandb
 
-from config_loader import args  # Training settings
 from models.witness_graphcnn import GraphCNN
 from revised_util import mol_to_s2v_graph, prepare_molecular_dataset
 
@@ -81,15 +80,14 @@ def train(args, model, device, train_graphs, optimizer, epoch, criterion):
         train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=4,
+        num_workers=16,
         collate_fn=collate_fn
     )
 
     loss_accum = 0
-    valid_batches = 0
     pbar = tqdm(train_loader, unit='batch')
 
-    for batch_graph in pbar:
+    for valid_batches, batch_graph in enumerate(pbar, start=1):
         batch_graph = list(batch_graph)  # Ensure it's a list
         output = model(batch_graph)
         labels = torch.FloatTensor([graph.label for graph in batch_graph]).to(device)
@@ -109,8 +107,6 @@ def train(args, model, device, train_graphs, optimizer, epoch, criterion):
 
         # Accumulate loss
         loss_accum += loss.detach().cpu().item()
-        valid_batches += 1
-
         # Update progress bar with valid loss
         if valid_batches > 0:
             avg_loss = loss_accum / valid_batches
@@ -118,7 +114,7 @@ def train(args, model, device, train_graphs, optimizer, epoch, criterion):
 
     average_loss = loss_accum / len(train_loader)
     print(f"Average training loss: {average_loss:.6f}")
-    wandb.log({"Average training loss": average_loss})
+    # wandb.log({"Average training loss": average_loss})
     
     return average_loss
 
@@ -137,7 +133,7 @@ def pass_data_iteratively(model, graphs, minibatch_size=64):
         dataset,
         batch_size=minibatch_size,
         shuffle=False,
-        num_workers=4,  # Adjust based on your system
+        num_workers=16,  # Adjust based on your system
         collate_fn=collate_fn
     )
 
@@ -189,6 +185,7 @@ def test(args, model, device, train_graphs, test_graphs, epoch, criterion, task_
     test_output = test_output.squeeze(1)
     
     if task_type == 'binary':
+        train_ap = average_precision_score(train_labels, train_output, average="macro")
         test_ap = average_precision_score(test_labels, test_output, average="macro")
     elif task_type == 'regression':
         # Replace with an appropriate regression metric, e.g., R2 score
@@ -197,11 +194,15 @@ def test(args, model, device, train_graphs, test_graphs, epoch, criterion, task_
         raise ValueError(f"Unsupported task type: {task_type}")
 
     print(f"Epoch: {epoch} - Train AP: {train_ap:.4f}, Test AP: {test_ap:.4f}")
-    wandb.log({"Train AP": train_ap, "Test AP": test_ap})
+    # wandb.log({"Train AP": train_ap, "Test AP": test_ap})
     
     return train_ap, test_ap
 
-def main():
+def main(args=None):
+    # If no args provided, use default args from config_loader
+    if args is None:
+        from config_loader import args
+    
     # Set up seeds and GPU device
     random_seed = args.seed
     num_classes = 1  # Adjust based on your task
@@ -252,6 +253,7 @@ def main():
 
     # Initialize the model with `pi_dimension`
     model = GraphCNN(
+        device=device,
         num_layers=args.num_layers,
         num_mlp_layers=args.num_mlp_layers,
         input_dim=train_graphs[0].node_features.shape[1],
@@ -261,7 +263,6 @@ def main():
         learn_eps=args.learn_eps,
         graph_pooling_type=args.graph_pooling_type,
         neighbor_pooling_type=args.neighbor_pooling_type,
-        device=device,
         num_neighbors=args.num_neighbors,
         num_landmarks=args.num_landmarks,
         first_pool_ratio=args.first_pool_ratio,
@@ -270,11 +271,11 @@ def main():
 
     # Initialize optimizer and scheduler
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=50, gamma=0.5)
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=100, gamma=0.5)
 
     
     wandb.init(
-        project="TopoPool-1",
+        project="TopoPool-2",
         config=dict({"input_dim": train_graphs[0].node_features.shape[1],
                      "output_dim": num_classes,
                     },
@@ -286,19 +287,29 @@ def main():
         scheduler.step()
 
         avg_loss = train(args, model, device, train_graphs, optimizer, epoch, criterion)
-        acc_train, acc_test = test(args, model, device, train_graphs, test_graphs, epoch, criterion, task_type)
+        ap_train, ap_test = test(args, model, device, train_graphs, test_graphs, epoch, criterion, task_type)
 
+        # Log metrics to W&B
+        wandb.log({
+            "epoch": epoch,
+            "Training Loss (avg)": avg_loss,
+            "Train AP": ap_train,
+            "Test AP": ap_test,
+            "Learning rate": scheduler.get_last_lr()[0]
+        }) 
+        
         if task_type == 'binary':
-            max_ap = max(max_ap, acc_test)
-            print("Current best result is:", max_ap)
-        elif task_type == 'regression':
-            # Handle regression metrics if applicable
-            # Example: Track best R2 score or lowest MSE
-            pass  # Replace with appropriate logic
+            max_ap = max(max_ap, ap_test)
+            best_epoch = epoch
+            print(f"Current best result is: {max_ap} (epoch:{best_epoch})")
+        # elif task_type == 'regression':
+        #     # Handle regression metrics if applicable
+        #     # Example: Track best R2 score or lowest MSE
+        #     pass  # Replace with appropriate logic
 
         if args.filename:
             with open(args.filename, 'a+') as f:
-                f.write(f"{avg_loss} {acc_train} {acc_test}\n")
+                f.write(f"{avg_loss} {ap_train} {ap_test}\n")
         print("")
 
         # Ensure that 'eps' attribute exists and is printed correctly
@@ -308,8 +319,17 @@ def main():
             print("Model does not have 'eps' attribute.")
 
     # Save the best AP score
-    with open(f"{args.dataset}_ap_results.txt", 'a+') as f:
+    # with open(f"{args.dataset}_ap_results.txt", 'a+') as f:
+    with open("cyp2c9_veith--AP_results.txt", 'a+') as f:
         f.write(f"{max_ap}\n")
+    
+    # Log final metrics
+    wandb.log({
+        "best test AP": max_ap,
+        "best score epoch": best_epoch
+    })
+
+    return max_ap  # Return best performance for sweep optimization
 
 if __name__ == '__main__':
     main()

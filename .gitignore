@@ -18,3 +18,4 @@ wheels/
 
 # Etc.
 *_results.txt
+.sourcery.yaml

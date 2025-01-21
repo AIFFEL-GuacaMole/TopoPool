@@ -1,70 +1,104 @@
-method: 'grid'
+method: 'random'
 
 metric:
   goal: 'maximize'
-  name: 'score'
+  name: 'best test AP'
 
 parameters:
   batch_size:
   # input batch size for training (default: 32)
-    - 32
-    - 128
-    - 512
+    values:
+      - 32
+      - 128
+      - 512
 
   lr:
   # learning rate (default: 0.001)
-    - 0.005
-    - 0.001
-    - 0.0005
-    - 0.0001
+    values:
+      - 0.005
+      - 0.001
+      - 0.0005
+      - 0.0001
+  # distribution: 'uniform'
+  #     max: 0.005
+  #     min: 0.0001
 
   seed:
   # random seed for splitting the dataset into 10-fold validation (default: 9)
-    - 9
+    values:
+      - 9
 
   fold_idx:
   # the index of fold in 10-fold validation. Should be less than 10.
-    - 0
+    values:
+      - 0
 
   num_layers:
   # number of layers INCLUDING the input one (default: 5)
-    - 3
-    - 5  
-    - 7
-    - 9
+    values:
+      - 3
+      - 5
+      - 7
+      - 9
 
   num_mlp_layers:
   # number of layers for MLP EXCLUDING the input one (default: 2). 1 means linear model.
-    - 2
-    - 4
-    - 6
+    values:
+      - 2
+      - 4
+      - 6
 
   hidden_dim:
   # number of hidden units (default: 8)
-    - 64
-    - 128
-    - 256
-    - 512
+    values:
+      - 64
+      - 128
+      - 256
+      - 512
 
   final_dropout:
   # final layer dropout (default: 0.0)
-    - 0.0
+    values:
+      - 0.0
 
   graph_pooling_type:
   # Pooling over nodes in a graph: sum or average
-    - "sum"
-    - "average"
+    values:
+      - "sum"
+      # - "average"
 
   neighbor_pooling_type:
   # Pooling over neighboring nodes: sum, average or max
-    - "sum"
-    - "average"
-    # - "max"
+    values:
+      - "sum"
+      # - "average"
+      # - "max"
+
+  num_neighbors:
+    values:
+      - 5
+      - 3
+      - 7
 
   num_landmarks:
   # number of landmarks for TDA (default: 10)
-    - 2
-    - 4
-    - 6
-    - 8
-    - 10
+    values:
+      - 2
+      - 4
+      - 6
+      - 8
+      - 10
+
+  first_pool_ratio:
+    values:
+      - 0.5
+      - 0.2
+      - 0.8
+
+  PI_hidden_dim:
+    values:
+      - 16
+      - 4
+      - 8
+      - 12
+      - 20
