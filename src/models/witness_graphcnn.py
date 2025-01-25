@@ -199,7 +199,7 @@ class GraphCNN(nn.Module):
                 # num_nodes_to_pool = max(1, int(num_nodes * pool_ratio))
                 
                 perm = topk(score_lifespan, self.first_pool_ratio, batch)  # permutation
-                perm = topk(score_lifespan, 0.2, batch)  # permutation
+                # perm = topk(score_lifespan, 0.2, batch)  # permutation
                 x = x[perm]
                 edge_index, _ = filter_adj(edge_index, edge_attr, perm, num_nodes=num_nodes)
 

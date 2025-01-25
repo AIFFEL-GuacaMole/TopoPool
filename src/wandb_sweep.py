@@ -1,6 +1,7 @@
 import wandb
 import yaml
 from revised_main import main
+# from parallel_main import main
 import argparse
 from config_loader import args as base_args
 
@@ -40,14 +41,20 @@ def train_with_sweep():
         wandb.finish()
 
 if __name__ == "__main__":
+    import multiprocessing as mp
+    mp.set_start_method('spawn', force=True)
+    
     # Load sweep configuration
     sweep_configuration = load_sweep_config()
     
     # Initialize the sweep
     sweep_id = wandb.sweep(
         sweep=sweep_configuration,
-        project="TopoPool-1"  # Make sure this matches your project name
+        project="TopoPool-2"  # Make sure this matches your project name
     )
     
     # Start the sweep
-    wandb.agent(sweep_id, function=train_with_sweep, count=15)  # Set count if you want to limit the number of runs
+    wandb.agent(sweep_id,
+                function=train_with_sweep,
+                # count=15  # Set `count` to limit the number of runs
+                )

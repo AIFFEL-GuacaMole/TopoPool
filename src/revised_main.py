@@ -80,7 +80,7 @@ def train(args, model, device, train_graphs, optimizer, epoch, criterion):
         train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=16,
+        num_workers=1,
         collate_fn=collate_fn
     )
 
@@ -133,7 +133,7 @@ def pass_data_iteratively(model, graphs, minibatch_size=64):
         dataset,
         batch_size=minibatch_size,
         shuffle=False,
-        num_workers=16,  # Adjust based on your system
+        num_workers=1,  # Adjust based on your system
         collate_fn=collate_fn
     )
 
@@ -299,8 +299,9 @@ def main(args=None):
         }) 
         
         if task_type == 'binary':
-            max_ap = max(max_ap, ap_test)
-            best_epoch = epoch
+            if ap_test > max_ap:
+                max_ap = ap_test
+                best_epoch = epoch
             print(f"Current best result is: {max_ap} (epoch:{best_epoch})")
         # elif task_type == 'regression':
         #     # Handle regression metrics if applicable

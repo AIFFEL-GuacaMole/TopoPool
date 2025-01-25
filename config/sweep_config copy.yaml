@@ -8,14 +8,17 @@ parameters:
   batch_size:
   # input batch size for training (default: 32)
     values:
-      # - 32
+      - 32
       - 128
-      # - 512
+      - 512
 
   lr:
   # learning rate (default: 0.001)
     values:
       - 0.005
+      - 0.001
+      - 0.0005
+      - 0.0001
   # distribution: 'uniform'
   #     max: 0.005
   #     min: 0.0001
@@ -34,24 +37,24 @@ parameters:
   # number of layers INCLUDING the input one (default: 5)
     values:
       - 3
-      # - 5
-      # - 7
-      # - 9
+      - 5
+      - 7
+      - 9
 
   num_mlp_layers:
   # number of layers for MLP EXCLUDING the input one (default: 2). 1 means linear model.
     values:
       - 2
-      # - 4
-      # - 6
+      - 4
+      - 6
 
   hidden_dim:
   # number of hidden units (default: 8)
     values:
-      # - 64
+      - 64
       - 128
-      # - 256
-      # - 512
+      - 256
+      - 512
 
   final_dropout:
   # final layer dropout (default: 0.0)
@@ -71,36 +74,31 @@ parameters:
       # - "average"
       # - "max"
 
-  PI_hidden_dim:
-  # (default: 16)
-    values:
-      - 4
-      - 8
-      - 12
-      - 16
-      - 20
-
-  first_pool_ratio:
-  # Top-k pooling ratio (defualt: 0.5)
-    values:
-      - 0.2
-      - 0.5
-      - 0.8
-  
   num_neighbors:
-  # (default: 5)
     values:
-      # - 5
-      # - 3
+      - 5
+      - 3
       - 7
-      - 9
-      - 11
 
   num_landmarks:
   # number of landmarks for TDA (default: 10)
     values:
       - 2
-      # - 4
-      # - 6
-      # - 8
-      # - 10
+      - 4
+      - 6
+      - 8
+      - 10
+
+  first_pool_ratio:
+    values:
+      - 0.5
+      - 0.2
+      - 0.8
+
+  PI_hidden_dim:
+    values:
+      - 16
+      - 4
+      - 8
+      - 12
+      - 20

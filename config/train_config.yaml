@@ -15,7 +15,7 @@ parser_arg:
         name_or_flags: '--epochs'
         help: 'number of epochs to train (default: 350)'
         type: int
-        default: 100
+        default: 50
 
     - learn_eps:
         name_or_flags: '--learn_eps'
@@ -43,13 +43,13 @@ parser_arg:
         name_or_flags: '--batch_size'
         help: 'input batch size for training (default: 32)'
         type: int
-        default: 512
+        default: 128
 
     - lr:
         name_or_flags: '--lr'
         help: 'learning rate (default: 0.001)'
         type: float
-        default: 0.001
+        default: 0.005
 
     - seed:
         name_or_flags: '--seed'
@@ -105,13 +105,13 @@ parser_arg:
         name_or_flags: '--num_neighbors'
         help: ''
         type: int
-        default: 5
+        default: 4
 
     - num_landmarks:
         name_or_flags: '--num_landmarks'
         help: 'number of landmarks for TDA (default: 10)'
         type: int
-        default: 6
+        default: 3
 
     - first_pool_ratio:
         name_or_flags: '--first_pool_ratio'
@@ -123,4 +123,4 @@ parser_arg:
         name_or_flags: '--PI_hidden_dim'
         help: 'hidden dimmesion size for Persistent Images (default: 16)'
         type: float
-        default: 16
+        default: 4
