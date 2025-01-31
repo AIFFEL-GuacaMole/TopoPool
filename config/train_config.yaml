@@ -119,11 +119,11 @@ parser_arg:
         type: float
         default: 0.5
 
-    - PI_resolution:
-        name_or_flags: '--PI_resolution'
-        help: 'X and Y resolution for Persistent Images (default: [5,5])'
+    - PI_resolution_sq:
+        name_or_flags: '--PI_resolution_sq'
+        help: 'square resolution for Persistent Images (default: 5)'
         type: 'list[int]'
-        default: [5,5]
+        default: 5
 
     - PI_hidden_dim:
         name_or_flags: '--PI_hidden_dim'

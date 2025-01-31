@@ -264,8 +264,9 @@ def calculate_rdkit_features(mol):
 def mol_to_data_obj(mol):
     # atoms
     atom_features_list = []
-    for atom in mol.GetAtoms():
-        atom_features_list.append(atom_to_feature_vector(atom))
+    atom_features_list.extend(
+        atom_to_feature_vector(atom) for atom in mol.GetAtoms()
+    )
     x = torch.tensor(np.asarray(atom_features_list), dtype=torch.long)
 
     # bonds
@@ -279,11 +280,9 @@ def mol_to_data_obj(mol):
         for bond in mol.GetBonds():
             i = bond.GetBeginAtomIdx()
             j = bond.GetEndAtomIdx()
-            edge_index.append([i, j])
-            edge_index.append([j, i])
+            edge_index.extend(([i, j], [j, i]))
             edge_feature = bond_to_feature_vector(bond)
-            edge_attr.append(edge_feature)
-            edge_attr.append(edge_feature)
+            edge_attr.extend((edge_feature, edge_feature))
         edge_index = torch.tensor(np.asarray(edge_index), dtype=torch.long).t().contiguous()
         edge_attr = torch.tensor(np.asarray(edge_attr), dtype=torch.long)
 

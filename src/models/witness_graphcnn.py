@@ -78,7 +78,7 @@ class GraphCNN(nn.Module):
                  num_neighbors,
                  num_landmarks,
                  first_pool_ratio,
-                 PI_resolution: list[int],
+                 PI_resolution_sq: int,
                  PI_hidden_dim: int):
         '''
             num_layers: number of layers in the neural networks (INCLUDING the input layer)
@@ -121,7 +121,7 @@ class GraphCNN(nn.Module):
             self.batch_norms.append(nn.BatchNorm1d(hidden_dim))
 
         # for attentional second-order pooling
-        self.PI_dim = PI_resolution[0] * PI_resolution[1]
+        self.PI_dim = PI_resolution_sq ** 2
         self.PI_hidden_dim = PI_hidden_dim
         self.total_latent_dim = input_dim + hidden_dim * (num_layers - 1) + self.PI_hidden_dim
         self.dense_dim = self.total_latent_dim
@@ -342,17 +342,12 @@ class GraphCNN(nn.Module):
 
         #Reweights the center node representation when aggregating it with its neighbors
         pooled = pooled + (1 + self.eps[layer])*h
-        pooled_rep = self.mlps[layer](pooled)
-        h = self.batch_norms[layer](pooled_rep)
-
-        #non-linearity
-        h = F.relu(h)
-        return h
+        return self._output_of_layer(layer, pooled)
 
 
     def next_layer(self, h, layer, padded_neighbor_list = None, Adj_block = None):
         ###pooling neighboring nodes and center nodes altogether
-        
+
         if self.neighbor_pooling_type == "max":
             ##If max pooling
             pooled = self.maxpool(h, padded_neighbor_list)
@@ -364,13 +359,14 @@ class GraphCNN(nn.Module):
                 degree = torch.spmm(Adj_block, torch.ones((Adj_block.shape[0], 1)).to(self.device))
                 pooled = pooled/degree
 
-        #representation of neighboring and center nodes 
+        return self._output_of_layer(layer, pooled)
+    
+    
+    def _output_of_layer(self, layer, pooled):
+        #    ↱ representation of neighboring and center nodes
         pooled_rep = self.mlps[layer](pooled)
-
         h = self.batch_norms[layer](pooled_rep)
-
-        #non-linearity
-        h = F.relu(h)
+        h = F.relu(h)  # non-linearity
         return h
 
 
