@@ -54,7 +54,7 @@ if __name__ == "__main__":
     )
     
     # Start the sweep
-    wandb.agent(sweep_id,
+    wandb.agent(sweep_id:="9n5ehw7u", ## use for distributed sweep
                 function=train_with_sweep,
                 # count=15  # Set `count` to limit the number of runs
                 )

@@ -266,6 +266,7 @@ def main(args=None):
         num_neighbors=args.num_neighbors,
         num_landmarks=args.num_landmarks,
         first_pool_ratio=args.first_pool_ratio,
+        PI_resolution=args.PI_resolution,
         PI_hidden_dim=args.PI_hidden_dim,
     ).to(device)
 

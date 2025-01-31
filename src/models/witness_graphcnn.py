@@ -78,6 +78,7 @@ class GraphCNN(nn.Module):
                  num_neighbors,
                  num_landmarks,
                  first_pool_ratio,
+                 PI_resolution: list[int],
                  PI_hidden_dim: int):
         '''
             num_layers: number of layers in the neural networks (INCLUDING the input layer)
@@ -120,12 +121,13 @@ class GraphCNN(nn.Module):
             self.batch_norms.append(nn.BatchNorm1d(hidden_dim))
 
         # for attentional second-order pooling
+        self.PI_dim = PI_resolution[0] * PI_resolution[1]
         self.PI_hidden_dim = PI_hidden_dim
         self.total_latent_dim = input_dim + hidden_dim * (num_layers - 1) + self.PI_hidden_dim
         self.dense_dim = self.total_latent_dim
         self.attend = nn.Linear(self.total_latent_dim - self.PI_hidden_dim, 1)
         self.linear1 = nn.Linear(self.dense_dim, output_dim)
-        self.mlp_PI_witnesses = nn.Linear(25, self.PI_hidden_dim)
+        self.mlp_PI_witnesses = nn.Linear(self.PI_dim, self.PI_hidden_dim)
 
         # point clouds pooling for nodes
         self.score_node_layer = GCNConv(input_dim, self.num_neighbors * 2)
@@ -232,15 +234,20 @@ class GraphCNN(nn.Module):
                     if len(witnesses_dgm) > 0 and np.isfinite(witnesses_dgm).all():
                         # Compute persistence image
                         PI_witnesses_dgm = torch.FloatTensor(
-                            persistence_images(witnesses_dgm, normalization=False).reshape(1,-1)
+                            persistence_images(
+                                dgm=witnesses_dgm,
+                                resolution=[self.PI_resolution[0],
+                                            self.PI_resolution[1]],
+                                normalization=False
+                            ).reshape(1,-1)
                         ).to(self.device)
                     else:
                         logger.debug(f"Warning: Invalid persistence diagram for graph {i}")
-                        PI_witnesses_dgm = torch.zeros((1, 25), device=self.device)
+                        PI_witnesses_dgm = torch.zeros((1, self.PI_dim), device=self.device)
                     
                 except Exception as e:
                     logger.debug(f"Warning: Error in witness complex computation for graph {i}: {e}")
-                    PI_witnesses_dgm = torch.zeros((1, 25), device=self.device)
+                    PI_witnesses_dgm = torch.zeros((1, self.PI_dim), device=self.device)
                 
                 PI_witnesses_dgms.append(PI_witnesses_dgm)
 
@@ -253,7 +260,7 @@ class GraphCNN(nn.Module):
             except Exception as e:
                 print(f"Error processing graph {i}: {e}")
                 # Add minimal valid data
-                PI_witnesses_dgms.append(torch.zeros((1, 25), device=self.device))
+                PI_witnesses_dgms.append(torch.zeros((1, self.PI_dim), device=self.device))
                 pooled_x.append(x[:1])
                 pooled_graph_sizes.append(1)
                 continue
