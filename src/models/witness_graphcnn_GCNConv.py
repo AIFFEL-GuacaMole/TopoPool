@@ -104,7 +104,7 @@ class GraphCNN(nn.Module):
         self.eps = nn.Parameter(torch.zeros(self.num_layers-1))
         self.num_neighbors = int(num_neighbors)
         self.num_landmarks = int(num_landmarks)
-        self.first_pool_ratio = float(first_pool_ratio)
+        self.first_pool_ratio: float | str = first_pool_ratio
 
         ###List of MLPs
         self.mlps = torch.nn.ModuleList()
@@ -200,7 +200,8 @@ class GraphCNN(nn.Module):
                 #     # ↳ Adaptive pooling ratio
                 # num_nodes_to_pool = max(1, int(num_nodes * pool_ratio))
                 
-                perm = topk(score_lifespan, self.first_pool_ratio, batch)  # permutation
+                # perm = topk(score_lifespan, self.first_pool_ratio, batch)  # permutation
+                perm = topk(score_lifespan, num_nodes, batch)
                 # perm = topk(score_lifespan, 0.2, batch)  # permutation
                 x = x[perm]
                 edge_index, _ = filter_adj(edge_index, edge_attr, perm, num_nodes=num_nodes)

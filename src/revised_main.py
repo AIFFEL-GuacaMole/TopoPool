@@ -12,7 +12,8 @@ import numpy as np
 import torch
 import wandb
 
-from models.witness_graphcnn import GraphCNN
+# from models.witness_graphcnn import GraphCNN
+from models.witness_graphcnn_GINConv import GraphCNN
 from revised_util import mol_to_s2v_graph, prepare_molecular_dataset
 
 
@@ -219,7 +220,9 @@ def main(args=None):
         torch.cuda.manual_seed_all(random_seed)
 
     # Access a specific benchmark configuration
-    benchmark_name = list(benchmark_config.keys())[2]  # e.g., 'cyp2c9_veith'
+    # benchmark_name = list(benchmark_config.keys())[2]  # e.g., 'cyp2c9_veith'
+    # benchmark_name = list(benchmark_config.keys())[21]  # e.g., 'herg'
+    benchmark_name = list(benchmark_config.keys())[21]
     group = admet_group(path='data/')
     benchmark = group.get(benchmark_name)
 
@@ -277,7 +280,8 @@ def main(args=None):
     
     wandb.init(
         project="TopoPool-2",
-        config=dict({"input_dim": train_graphs[0].node_features.shape[1],
+        config=dict({"benchmark_name": benchmark_name,
+                     "input_dim": train_graphs[0].node_features.shape[1],
                      "output_dim": num_classes,
                     },
                     **vars(args))
