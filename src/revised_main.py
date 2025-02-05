@@ -13,7 +13,7 @@ import torch
 import wandb
 
 # from models.witness_graphcnn import GraphCNN
-from models.witness_graphcnn_GINConv import GraphCNN
+from models.gnn_realization import GCNconv as GraphCNN
 from revised_util import mol_to_s2v_graph, prepare_molecular_dataset
 
 
@@ -222,7 +222,7 @@ def main(args=None):
     # Access a specific benchmark configuration
     # benchmark_name = list(benchmark_config.keys())[2]  # e.g., 'cyp2c9_veith'
     # benchmark_name = list(benchmark_config.keys())[21]  # e.g., 'herg'
-    benchmark_name = list(benchmark_config.keys())[21]
+    benchmark_name = list(benchmark_config.keys())[2]
     group = admet_group(path='data/')
     benchmark = group.get(benchmark_name)
 
@@ -254,7 +254,7 @@ def main(args=None):
     else:
         raise ValueError(f"Unsupported task type: {task_type}")
 
-    # Initialize the model with `pi_dimension`
+    # Initialize the model
     model = GraphCNN(
         device=device,
         num_layers=args.num_layers,
@@ -291,8 +291,13 @@ def main(args=None):
     for epoch in range(1, args.epochs + 1):
         scheduler.step()
 
-        avg_loss = train(args, model, device, train_graphs, optimizer, epoch, criterion)
-        ap_train, ap_test = test(args, model, device, train_graphs, test_graphs, epoch, criterion, task_type)
+        avg_loss = train(args, model, device,
+                         train_graphs,
+                         optimizer, epoch, criterion)
+        
+        ap_train, ap_test = test(args, model, device,
+                                 train_graphs, test_graphs,
+                                 epoch, criterion, task_type)
 
         # Log metrics to W&B
         wandb.log({

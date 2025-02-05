@@ -43,7 +43,7 @@ parser_arg:
         name_or_flags: '--batch_size'
         help: 'input batch size for training (default: 32)'
         type: int
-        default: 128
+        default: 64
 
     - lr:
         name_or_flags: '--lr'
@@ -67,19 +67,21 @@ parser_arg:
         name_or_flags: '--num_layers'
         help: 'number of layers INCLUDING the input one (default: 5)'
         type: int
-        default: 7
+        default: 5
 
     - num_mlp_layers:
         name_or_flags: '--num_mlp_layers'
-        help: 'number of layers for MLP EXCLUDING the input one (default: 2). 1 means linear model.'
+        help: >-
+            number of layers for MLP EXCLUDING the input one.
+            1 means linear model. (default: 2)
         type: int
-        default: 4
+        default: 1
 
     - hidden_dim:
         name_or_flags: '--hidden_dim'
         help: 'number of hidden units (default: 8)'
         type: int
-        default: 512
+        default: 128
 
     - final_dropout:
         name_or_flags: '--final_dropout'
@@ -105,7 +107,7 @@ parser_arg:
         name_or_flags: '--num_neighbors'
         help: ''
         type: int
-        default: 4
+        default: 9
 
     - num_landmarks:
         name_or_flags: '--num_landmarks'
@@ -115,18 +117,18 @@ parser_arg:
 
     - first_pool_ratio:
         name_or_flags: '--first_pool_ratio'
-        help: 'ratio of the first pooling (default: )'
-        type: float
-        default: 0.5
+        help: 'ratio of the first pooling (default: 0.5)'
+        type: str
+        default: 1.0 (use all nodes)
 
     - PI_resolution_sq:
         name_or_flags: '--PI_resolution_sq'
-        help: 'square resolution for Persistent Images (default: 5)'
+        help: 'one side size of square resolution for Persistent Images (default: 5)'
         type: 'list[int]'
-        default: 5
+        default: 6
 
     - PI_hidden_dim:
         name_or_flags: '--PI_hidden_dim'
         help: 'hidden dimmesion size for Persistent Images (default: 16)'
         type: float
-        default: 4
+        default: 20

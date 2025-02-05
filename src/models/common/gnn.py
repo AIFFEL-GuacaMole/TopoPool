@@ -1,69 +1,19 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from abc import ABC, abstractmethod
 from torch.autograd import Variable
 from torch_geometric.nn.pool.topk_pool import topk, filter_adj
-from torch_geometric.nn import GCNConv, SAGEConv, GATConv, GINConv
 from torch_geometric.utils.num_nodes import maybe_num_nodes
 from torch_geometric.utils import to_dense_adj
 import pdb
-import gudhi as gd
-import numpy as np
 
-from models.log_setup import logger
-from models.mlp import MLP
-
-def persistence_images(dgm, resolution = [5,5], return_raw = False, normalization = True, bandwidth = 1., power = 1.):
-    PXs, PYs = dgm[:, 0], dgm[:, 1]
-    xm, xM, ym, yM = PXs.min(), PXs.max(), PYs.min(), PYs.max()
-    x = np.linspace(xm, xM, resolution[0])
-    y = np.linspace(ym, yM, resolution[1])
-    X, Y = np.meshgrid(x, y)
-    Zfinal = np.zeros(X.shape)
-    X, Y = X[:, :, np.newaxis], Y[:, :, np.newaxis]
-
-    # Compute persistence image
-    P0, P1 = np.reshape(dgm[:, 0], [1, 1, -1]), np.reshape(dgm[:, 1], [1, 1, -1])
-    weight = np.abs(P1 - P0)
-    distpts = np.sqrt((X - P0) ** 2 + (Y - P1) ** 2)
-
-    if return_raw:
-        lw = [weight[0, 0, pt] for pt in range(weight.shape[2])]
-        lsum = [distpts[:, :, pt] for pt in range(distpts.shape[2])]
-    else:
-        weight = weight ** power
-        Zfinal = (np.multiply(weight, np.exp(-distpts ** 2 / bandwidth))).sum(axis=2)
-
-    output = [lw, lsum] if return_raw else Zfinal
-
-    return (
-        (output - np.min(output)) / (np.max(output) - np.min(output))
-        if normalization
-        else output
-    )
-
-def diagram_from_simplex_tree(st, mode, dim=0):
-    st.compute_persistence(min_persistence=-1.)
-    dgm0 = st.persistence_intervals_in_dimension(0)[:, 1]
-
-    if mode == "superlevel":
-        dgm0 = - dgm0[np.where(np.isfinite(dgm0))]
-    elif mode == "sublevel":
-        dgm0 = dgm0[np.where(np.isfinite(dgm0))]
-    if dim==0:
-        return dgm0
-    elif dim==1:
-        dgm1 = st.persistence_intervals_in_dimension(1)[:,0]
-        return dgm0, dgm1
-
-def sum_diag_from_point_cloud(X, mode="superlevel"):
-    rc = gd.RipsComplex(points=X)
-    st = rc.create_simplex_tree(max_dimension=1)
-    dgm = diagram_from_simplex_tree(st, mode=mode)
-    return np.sum(dgm)
+from models.common.log_setup import logger
+from models.common.mlp import MLP
+from TDA.tda import *
 
 
-class GraphCNN(nn.Module):
+class GraphCNN(nn.Module, ABC):
     def __init__(self,
                  num_layers,
                  num_mlp_layers,
@@ -129,12 +79,14 @@ class GraphCNN(nn.Module):
         self.linear1 = nn.Linear(self.dense_dim, output_dim)
         self.mlp_PI_witnesses = nn.Linear(self.PI_dim, self.PI_hidden_dim)
 
-        # point clouds pooling for nodes
-        self.score_node_layer = GCNConv(input_dim, self.num_neighbors * 2)
-        # point clouds pooling for graphs
-        self.score_graph_layer = GCNConv(input_dim, 2)
+        # point clouds pooling for nodes and graphs
+        self.point_clouds_pooling(input_dim)
 
-
+    @abstractmethod
+    def point_clouds_pooling(self) -> None:
+        pass
+    
+    # Keeping all preprocessing methods unchanged as they don't depend on the convolution type
     def __preprocess_neighbors_maxpool(self, batch_graph):
         ###create padded_neighbor_list in concatenated graph
 
@@ -143,7 +95,6 @@ class GraphCNN(nn.Module):
 
         padded_neighbor_list = []
         start_idx = [0]
-
 
         for i, graph in enumerate(batch_graph):
             start_idx.append(start_idx[i] + len(graph.g))
@@ -183,7 +134,7 @@ class GraphCNN(nn.Module):
                 edge_index = graph.edge_mat.to(self.device)
                 num_nodes = x.size(0)
 
-                # Compute node embeddings and point clouds
+                # Compute node embeddings and point clouds using GINConv
                 witnesses = self.score_graph_layer(x, edge_index).to(self.device)
                 node_embeddings = self.score_node_layer(x, edge_index).to(self.device)
                 node_point_clouds = node_embeddings.view(-1, self.num_neighbors, 2).to(self.device)
@@ -194,15 +145,10 @@ class GraphCNN(nn.Module):
                     for j in range(node_point_clouds.size(0))
                 ]).to(self.device)
 
-                # First pooling operation with adaptive ratio
+                # First pooling operation
                 batch = torch.zeros(num_nodes, dtype=torch.long, device=self.device)
-                # pool_ratio = min(0.5, max(0.1, num_nodes / 100))
-                #     # ↳ Adaptive pooling ratio
-                # num_nodes_to_pool = max(1, int(num_nodes * pool_ratio))
-                
-                # perm = topk(score_lifespan, self.first_pool_ratio, batch)  # permutation
+                # perm = topk(score_lifespan, self.first_pool_ratio, batch)
                 perm = topk(score_lifespan, num_nodes, batch)
-                # perm = topk(score_lifespan, 0.2, batch)  # permutation
                 x = x[perm]
                 edge_index, _ = filter_adj(edge_index, edge_attr, perm, num_nodes=num_nodes)
 
@@ -237,8 +183,10 @@ class GraphCNN(nn.Module):
                         PI_witnesses_dgm = torch.FloatTensor(
                             persistence_images(
                                 dgm=witnesses_dgm,
-                                resolution=[self.PI_resolution[0],
-                                            self.PI_resolution[1]],
+                                resolution=[None,  # make sure to be non-negative
+                                            None],
+                                # resolution=[int(np.sqrt(self.PI_resolution_sq)),  # make sure to be non-negative
+                                #             int(np.sqrt(self.PI_resolution_sq))],
                                 normalization=False
                             ).reshape(1,-1)
                         ).to(self.device)
@@ -392,8 +340,6 @@ class GraphCNN(nn.Module):
             else:
                 # operation
                 h = self.next_layer(h, layer, Adj_block = Adj_block)
-            # print(f"Layer {layer} output - has NaN: {torch.isnan(h).any()}")
-            # print(f"Layer {layer} output - range: [{h.min()}, {h.max()}]")
             hidden_rep.append(h)
 
         hidden_rep = torch.cat(hidden_rep, 1)
@@ -422,7 +368,4 @@ class GraphCNN(nn.Module):
 
         score = F.dropout(self.linear1(batch_graphs_out), self.final_dropout, training=self.training)
         score = torch.clamp(score, min=-88.0, max=88.0)  # Add clamping
-        # print("Final score:", 
-        #   f"range=[{score.min()}, {score.max()}]",
-        #   f"has_nan={torch.isnan(score).any()}")
         return score

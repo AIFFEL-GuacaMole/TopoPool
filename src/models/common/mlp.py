@@ -1,4 +1,4 @@
-from models.log_setup import logger
+from models.common.log_setup import logger
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

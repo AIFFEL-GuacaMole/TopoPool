@@ -1,8 +1,12 @@
+# global ignore
 .DS_Store
-wandb
+.vscode
 checkpoints
-data
-**/*.log
+*.log
+
+# local ignore
+/wandb
+/data
 
 # Python-generated files
 __pycache__/
