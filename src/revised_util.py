@@ -59,7 +59,7 @@ def safe_index(l, e):
     """
     try:
         return l.index(e)
-    except:
+    except Exception:
         return len(l) - 1
 
 
@@ -226,7 +226,7 @@ def canonicalize_3d_mol(mol_smiles, mol_3d):
         mol_smiles.GetConformer()
         # check to make sure a conformer was actually generated
         # sometime conformer generation fails
-    except:
+    except Exception:
         print('Failed to embed conformer')
         return None
 
@@ -414,46 +414,53 @@ def mol_to_s2v_graph(mol, label):
         print(f"Error processing molecule: {e}")
         return None
     
-def prepare_molecular_dataset(train_df, test_df):
-    """Prepare molecular datasets in original format"""
-    # Process training data
+def prepare_molecular_dataset(train_df, test_df=None):
+    """
+    Prepare molecular dataset from SMILES strings.
+    
+    Args:
+        train_df: Training data DataFrame
+        test_df: Test data DataFrame (optional)
+    
+    Returns:
+        Tuple of (train_graphs, test_graphs)
+    """
     train_graphs = []
-    skipped_train = 0
-    for idx, row in train_df.iterrows():
-        mol = Chem.MolFromSmiles(row['Drug'])
-        if mol is not None:
-            label = int(row['Y'])
-            graph = mol_to_s2v_graph(mol, label)
-            if graph is not None:
-                train_graphs.append(graph)
-            else:
-                skipped_train += 1
-                smiles = Chem.MolToSmiles(mol)
-                print(f"Skipped invalid training molecule: {smiles}")
-        else:
-            skipped_train += 1
-            print(f"Skipped training molecule with invalid SMILES: {row['Drug']}")
-
-    # Process test data
     test_graphs = []
-    skipped_test = 0
-    for idx, row in test_df.iterrows():
-        mol = Chem.MolFromSmiles(row['Drug'])
-        if mol is not None:
-            label = int(row['Y'])
-            graph = mol_to_s2v_graph(mol, label)
-            if graph is not None:
-                test_graphs.append(graph)
-            else:
-                skipped_test += 1
-                smiles = Chem.MolToSmiles(mol)
-                print(f"Skipped invalid testing molecule: {smiles}")
-        else:
-            skipped_test += 1
-            print(f"Skipped testing molecule with invalid SMILES: {row['Drug']}")
+    skipped_train = 0
+    
+    if train_df is not None:
+        for idx, row in train_df.iterrows():
+            mol = Chem.MolFromSmiles(row['Drug'])
+            if mol is None:
+                skipped_train += 1
+                continue
+            try:
+                graph = mol_to_s2v_graph(mol, row['Y'])
+                if graph is not None:
+                    train_graphs.append(graph)
+            except Exception as e:
+                skipped_train += 1
 
-    print(f"Processed {len(train_graphs)} training graphs, skipped {skipped_train} training molecules.")
-    print(f"Processed {len(test_graphs)} test graphs, skipped {skipped_test} test molecules.")
+    if test_df is not None:
+        skipped_test = 0
+
+        for idx, row in test_df.iterrows():
+            mol = Chem.MolFromSmiles(row['Drug'])
+            if mol is None:
+                skipped_test += 1
+                continue
+            try:
+                graph = mol_to_s2v_graph(mol, row['Y'])
+                if graph is not None:
+                    test_graphs.append(graph)
+            except Exception as e:
+                skipped_test += 1
+
+    # Only print summary if molecules were processed
+    # if train_df is not None:
+    #     print(f"Processed {len(train_graphs)} training graphs" + 
+    #           (f", skipped {skipped_train} molecules" if skipped_train > 0 else ""))
 
     return train_graphs, test_graphs
 

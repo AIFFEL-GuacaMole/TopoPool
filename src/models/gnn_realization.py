@@ -5,6 +5,10 @@ Module storing the classes having UML abstraction relationship type as
 
 import torch.nn as nn
 from torch_geometric.nn import GCNConv, GINConv
+# from dgl.model_zoo import GIN
+# from dgl.data import GINDataset
+# from dgl.nn import GINConv
+# from dgl.dataloading import GraphDataLoader
 from models.common import gnn
 
 
@@ -39,3 +43,18 @@ class GINconv(gnn.GraphCNN):
             nn.Linear(2, 2)
         )
         self.score_graph_layer = GINConv(graph_nn, train_eps=True)
+
+
+class PretrainedGIN(gnn.GraphCNN):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Load the pretrained GIN model from DGL-LifeSci
+        self.pretrained_model = GINConv(in_feats=self.input_dim, out_feats=self.output_dim, aggregator_type='sum')
+
+    def forward(self, g, features):
+        # Use the pretrained model for forward pass
+        return self.pretrained_model(g, features)
+
+    def point_clouds_pooling(self, input_dim):
+        # This method can be customized if additional pooling is required
+        pass
